@@ -207,7 +207,8 @@ function musicTick() {
   const want = AU.music && game.state !== 'paused' ? (starry ? 'star' : AU.music) : null;
   if (want !== AU.playing) { AU.playing = want; AU.step = 0; AU.next = AU.ctx.currentTime + 0.06; }
   if (!want) return;
-  const s = SONGS[want], sd = 60 / s.tempo / 4, c = AU.ctx;
+  const hurry = game.state === 'play' && game.timeLeft < 30 * 60 && want !== 'star';
+  const s = SONGS[want], sd = 60 / (s.tempo * (hurry ? 1.22 : 1)) / 4, c = AU.ctx;
   if (AU.next < c.currentTime) AU.next = c.currentTime + 0.03;
   while (AU.next < c.currentTime + 0.14) {
     const i = AU.step % s.n, t = AU.next, b = i % 16;
@@ -363,6 +364,8 @@ function buildLevels() {
   return L;
 }
 const LEVELS = buildLevels();
+const LEVEL_TIME = [180, 200, 180, 300]; // seconds on the clock for each world
+const CHASE_SPEED = 1.25;                // how fast the storm advances in chase levels (px per frame)
 
 // ---------------------------------------------------------------- input
 const keys = {};
@@ -515,7 +518,7 @@ function popup(x, y, text, color = '#fff') { popups.push({ x, y, text, color, li
 let game = {
   state: 'title', mode: 1, sel: 0, world: 0, unlocked: 1, score: 0, coins: 0, lives: 5,
   players: [], ents: [], cam: { x: 0 }, t: 0, timer: 0, levelCoins: 0, totalCoins: 0, check: null,
-  fireworks: [], best: 0, levelTime: 0, stars: [false, false, false], bestStars: [], boss: null, freeze: 0, look: 0, shake: 0,
+  fireworks: [], best: 0, levelTime: 0, timeLeft: 0, timeMax: 0, timeBonus: 0, chaseX: null, stars: [false, false, false], bestStars: [], boss: null, freeze: 0, look: 0, shake: 0,
 };
 try { game.unlocked = Math.max(1, Math.min(LEVELS.length, +localStorage.getItem('ak_unlocked') || 1)); game.best = +localStorage.getItem('ak_best') || 0; game.bestStars = JSON.parse(localStorage.getItem('ak_stars') || '[]'); } catch (e) {}
 if (DEBUG) game.unlocked = LEVELS.length;
@@ -540,6 +543,8 @@ function loadLevel(i) {
   lv = { w: src.w, theme: src.theme, name: src.name, g: src.g.map(r => r.slice()), start: src.start };
   game.ents = []; parts = []; popups = []; game.fireworks = [];
   game.totalCoins = 0; game.levelCoins = 0; game.levelTime = 0;
+  game.timeMax = LEVEL_TIME[i] * 60; game.timeLeft = game.timeMax; game.timeBonus = 0;
+  game.chaseX = src.theme === 'sky' ? -320 : null;
   game.stars = [false, false, false]; game.boss = null; game.freeze = 0; game.look = 0; game.shake = 0;
   bumpAnim.clear(); cannonTimers.clear();
   for (let y = 0; y < H; y++) for (let x = 0; x < lv.w; x++) if (lv.g[y][x] === 'C' || lv.g[y][x] === '?') game.totalCoins++;
@@ -597,7 +602,7 @@ function die(p, pit = false) {
 function respawn(p) {
   const other = game.players.find(q => q !== p && !q.dead && !q.finished);
   if (other) { p.x = other.x; p.y = other.y - 20; }
-  else { p.x = game.check.x; p.y = game.check.y - p.h; }
+  else { p.x = game.check.x; p.y = game.check.y - p.h; if (game.chaseX !== null) game.chaseX = Math.max(-320, p.x - VW * 0.8); }
   Object.assign(p, { dead: false, gone: false, vx: 0, vy: 0, hearts: 3, inv: 120, star: 0, wings: false, plat: null });
   burst(p.x + p.w / 2, p.y + p.h / 2, '#fff', 16, 5);
 }
@@ -670,11 +675,25 @@ function update() {
   if (game.freeze > 0) { game.freeze--; return; }
   game.levelTime++;
 
+  // the clock: hurry-up warning at 30 seconds, lose a life at zero
+  game.timeLeft--;
+  if (game.timeLeft === 30 * 60) { popup(game.cam.x + VW / 2, 200, 'HURRY UP!', '#ff6b6b'); seq([84, 88, 84, 88, 84, 88], 0, 0.09, 0.1, 'square', 0.1); }
+  if (game.timeLeft <= 10 * 60 && game.timeLeft > 0 && game.timeLeft % 60 === 0) tone(1200, 0.06, 'square', 0.08);
+  if (game.timeLeft <= 0) {
+    const live = game.players.filter(p => !p.dead && !p.finished);
+    popup(game.cam.x + VW / 2, 200, "TIME'S UP!", '#ff6b6b');
+    live.forEach(p => die(p)); game.lives += Math.max(0, live.length - 1);
+    game.timeLeft = game.timeMax;
+  }
+  // the storm: in chase levels the screen's left edge keeps creeping forward
+  if (game.chaseX !== null) game.chaseX = Math.min(lv.w * T - VW, game.chaseX + CHASE_SPEED);
+
   // entities first (platforms move, riders carried)
   for (const e of game.ents) updateEnt(e);
   for (const p of game.players) updatePlayer(p);
-  if (game.mode === 2) coopClamp();
   updateCamera(false);
+  if (game.mode === 2) coopClamp();
+  if (game.chaseX !== null) chaseClamp();
   updateCannons();
   updateParticles();
   game.ents = game.ents.filter(e => !e.remove);
@@ -693,6 +712,19 @@ function updateCamera(snap) {
   else { game.look += (live[0].face * 70 - game.look) * (snap ? 1 : 0.035); tx = live[0].x + live[0].w / 2 - VW * 0.5 + game.look; }
   tx = Math.max(0, Math.min(lv.w * T - VW, tx));
   game.cam.x = snap ? tx : game.cam.x + (tx - game.cam.x) * 0.12;
+  if (game.chaseX !== null && game.state === 'play') game.cam.x = Math.max(game.cam.x, game.chaseX);
+}
+// The storm shoves stragglers along; anyone squashed against a wall loses a life.
+function chaseClamp() {
+  for (const p of game.players) {
+    if (p.dead || p.finished) continue;
+    const minX = game.cam.x + 26;
+    if (p.x >= minX) continue;
+    p.x = minX; if (p.vx < 0) p.vx = 0;
+    if (game.t % 6 === 0) burst(p.x, p.y + p.h / 2, '#d9c8ff', 2, 3, 0, 4);
+    const tx = Math.floor((p.x + p.w - 0.01) / T);
+    for (let ty = Math.floor(p.y / T); ty <= Math.floor((p.y + p.h - 0.01) / T); ty++) if (solid(tile(tx, ty))) { popup(p.x, p.y - 10, 'SQUASHED!', '#ff6b6b'); die(p); break; }
+  }
 }
 function coopClamp() {
   for (const p of game.players) {
@@ -788,6 +820,7 @@ function updatePlayer(p) {
     if (e.k === 'check') {
       if (!e.on && overlap(p, e)) {
         e.on = true; game.check = { x: e.x - 4, y: e.y + e.h }; SFX.check();
+        game.timeLeft += 20 * 60; popup(e.x + 8, e.y - 30, '+20 TIME', '#bff');
         burst(e.x + 8, e.y + 10, '#7dff7d', 16, 4); popup(e.x + 8, e.y - 10, 'CHECKPOINT!', '#7dff7d');
         game.players.forEach(q => { if (!q.dead) q.hearts = Math.max(q.hearts, 3); });
       }
@@ -844,7 +877,8 @@ function reachGoal(p, e) {
   game.state = 'goal'; game.timer = 0; game.goal = e;
   const hgt = Math.max(0, Math.min(1, (e.y + e.h - (p.y + p.h)) / e.h));
   const bonus = Math.round(hgt * 50) * 100 + 500;
-  game.score += bonus; popup(e.x, p.y - 10, '+' + bonus, '#ffe14a');
+  game.timeBonus = Math.floor(game.timeLeft / 60) * 20;
+  game.score += bonus + game.timeBonus; popup(e.x, p.y - 10, '+' + bonus, '#ffe14a');
   stopSong(); SFX.win();
   game.players.forEach(q => { if (q.dead) respawn(q); q.finished = true; q.vx = 0; q.vy = 0; q.inv = 0; });
   p.x = e.x - p.w + 4;
@@ -1661,6 +1695,35 @@ function heart(x, y, s, c, outline = true) {
   if (outline) { ctx.strokeStyle = '#5a1a2a'; ctx.lineWidth = 2; ctx.stroke(); }
 }
 
+function drawStorm() {
+  const edge = game.chaseX - game.cam.x, t = game.t; // screen x of the storm front
+  if (edge < -500) return;
+  if (edge < -40) { // off-screen but close: warn
+    const a = 0.5 + Math.sin(t * 0.2) * 0.3;
+    ctx.globalAlpha = a; ctx.fillStyle = '#5b2a86'; ctx.fillRect(0, 0, 10, VH); ctx.globalAlpha = 1;
+    if (Math.floor(t / 20) % 2) text('⚡ STORM!', 16, VH / 2, 16, '#ffe14a', 'left', '#3a1a5a', 5);
+    return;
+  }
+  const x = edge + 30;
+  const g = ctx.createLinearGradient(x - 60, 0, x + 30, 0);
+  g.addColorStop(0, 'rgba(50,25,85,.95)'); g.addColorStop(1, 'rgba(90,50,140,0)');
+  ctx.fillStyle = g; ctx.fillRect(x - 140, 0, 170, VH);
+  ctx.fillStyle = '#4a2478';
+  for (let i = 0; i < 9; i++) { const yy = i * 68 + Math.sin(t * 0.05 + i) * 8; ctx.beginPath(); ctx.arc(x - 34 + Math.sin(t * 0.07 + i * 2) * 6, yy, 44, 0, 7); ctx.fill(); }
+  ctx.fillStyle = '#6b3aa6';
+  for (let i = 0; i < 9; i++) { const yy = i * 68 + 30 + Math.sin(t * 0.06 + i) * 8; ctx.beginPath(); ctx.arc(x - 20 + Math.cos(t * 0.05 + i) * 6, yy, 30, 0, 7); ctx.fill(); }
+  // grumpy face
+  const fy = VH * 0.42 + Math.sin(t * 0.05) * 10;
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.ellipse(x - 30, fy, 9, 11, 0, 0, 7); ctx.ellipse(x - 4, fy, 9, 11, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(x - 27, fy + 2, 4, 0, 7); ctx.arc(x - 1, fy + 2, 4, 0, 7); ctx.fill();
+  ctx.strokeStyle = '#1e0f33'; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(x - 42, fy - 16); ctx.lineTo(x - 22, fy - 9); ctx.moveTo(x + 8, fy - 16); ctx.lineTo(x - 12, fy - 9); ctx.stroke();
+  ctx.beginPath(); ctx.arc(x - 16, fy + 30, 10, Math.PI + 0.3, -0.3); ctx.stroke();
+  if (t % 50 < 6) { // lightning flicker
+    ctx.strokeStyle = '#fff36b'; ctx.lineWidth = 3; ctx.beginPath(); const ly = (t * 37) % (VH - 120) + 20;
+    ctx.moveTo(x - 20, ly); ctx.lineTo(x - 2, ly + 22); ctx.lineTo(x - 14, ly + 26); ctx.lineTo(x + 6, ly + 54); ctx.stroke();
+  }
+}
+
 function drawPlayer(p) {
   if (p.gone) return;
   if (p.inv > 0 && Math.floor(p.inv / 4) % 2 === 0 && !p.dead) return;
@@ -1731,6 +1794,14 @@ function drawHUD() {
   text('×' + game.coins, hx + 86, 34, 20, '#fff', 'left');
   text(`World ${game.world + 1}: ${lv.name}`, VW - 16, 88, 14, '#fff', 'right', '#222', 4);
   text('Score ' + game.score, VW - 16, 68, 18, '#ffe14a', 'right', '#222', 5);
+  const secs = Math.max(0, Math.ceil(game.timeLeft / 60)), low = secs <= 30;
+  const tcol = low ? (Math.floor(game.t / 15) % 2 ? '#ff5a5a' : '#fff') : '#fff';
+  const tx0 = VW - 16, ty0 = 114, tsz = low ? 26 : 22;
+  text(String(secs), tx0, ty0, tsz, tcol, 'right', '#222', 5);
+  const tw = ctx.measureText(String(secs)).width;
+  // little clock icon
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#222'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(tx0 - tw - 16, ty0, 9, 0, 7); ctx.fill(); ctx.stroke();
+  ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(tx0 - tw - 16, ty0 - 5.5); ctx.lineTo(tx0 - tw - 16, ty0); ctx.lineTo(tx0 - tw - 12, ty0 + 2); ctx.stroke();
 }
 
 function panel(x, y, w, h) {
@@ -1800,7 +1871,7 @@ function drawIntro() {
   });
   text('Lives × ' + game.lives, VW / 2, 450, 22, '#fff');
   const swapTip = game.mode === 1 ? (TOUCH.on ? '  Tap ⇄ to swap kids!' : '  Press X to swap kids!') : '';
-  const tips = ['Stomp the Grumbles and find 3 big stars!' + swapTip, 'Ice is slippery! Watch out for falling icicles!', 'Bounce on springs and ride the clouds!', 'Dodge the fire and beat King Grumble!'];
+  const tips = ['Stomp the Grumbles and find 3 big stars!' + swapTip, 'Ice is slippery! Watch out for falling icicles!', 'A storm is chasing you! Keep moving and beat the clock!', 'Dodge the fire and beat King Grumble!'];
   text(tips[game.world], VW / 2, 490, VW < 800 ? 15 : 18, '#bff', 'center', '#222', 4);
   ctx.globalAlpha = 1;
 }
@@ -1817,7 +1888,7 @@ function drawDone() {
   drawCoin(VW / 2 - 90, 300, game.t, 12);
   text(`${game.levelCoins} / ${game.totalCoins} coins`, VW / 2 + 10, 301, 24, '#fff');
   const s = Math.floor(game.levelTime / 60);
-  text(`Time ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}   ·   Score ${game.score}`, VW / 2, 345, 20, '#fff');
+  text(`Time ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}   ·   Time bonus +${game.timeBonus || 0}   ·   Score ${game.score}`, VW / 2, 345, 18, '#fff');
   if (game.timer > 30 && Math.floor(game.t / 25) % 2) text(TOUCH.on ? 'Tap for the next world!' : 'Press ENTER for the next world!', VW / 2, 395, 18, '#bff', 'center', '#222', 4);
 }
 function drawGameOver() {
@@ -1850,6 +1921,7 @@ function draw() {
   for (const e of game.ents) if (e.k !== 'item') drawEnt(e);
   for (const e of game.ents) if (e.k === 'item') drawEnt(e);
   for (const p of game.players) drawPlayer(p);
+  if (game.chaseX !== null) drawStorm();
   drawParticles();
   ctx.restore();
   drawHUD();

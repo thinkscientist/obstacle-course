@@ -21,13 +21,14 @@ The characters are fully hand-drawn cartoons, and the game runs in the browser w
   - ⭐ **Super Star** makes you invincible for a while.
   - ❤️ **Heart** gives you an extra heart.
 - Find the **3 big stars** hidden in every world.
+- **Beat the clock!** Every world has a countdown. The music speeds up for the last 30 seconds, and running out costs a life. Checkpoints add 20 seconds, and leftover time becomes bonus points.
 - Collect 50 smiley coins to earn an extra life. Touch a green checkpoint flag to save your spot.
 
 ## Worlds
 
 1. **Sunny Meadow**: springs, moving platforms and falling platforms
 2. **Penguin Peaks**: slippery ice, sliding penguins and falling icicles
-3. **Smiley Skies**: a sky-high obstacle course across clouds
+3. **Smiley Skies**: a sky-high obstacle course across clouds, chased by a grumpy storm that keeps the screen moving
 4. **Lava Castle**: fire bars, crushers, cannons, lava and the boss, **King Grumble**
 
 ## Publishing on GitHub Pages
