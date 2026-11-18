@@ -364,8 +364,14 @@ function buildLevels() {
   return L;
 }
 const LEVELS = buildLevels();
-const LEVEL_TIME = [180, 200, 180, 300]; // seconds on the clock for each world
-const CHASE_SPEED = 1.25;                // how fast the storm advances in chase levels (px per frame)
+// Difficulty sets how long the clock gives you in each world, how much time a checkpoint adds,
+// how fast the storm chases, and how much each leftover second is worth.
+const DIFFS = [
+  { name: 'Easy', color: '#7dff7d', time: [120, 130, 130, 200], check: 20, chase: 1.1, bonus: 10 },
+  { name: 'Normal', color: '#ffe14a', time: [80, 90, 90, 150], check: 15, chase: 1.5, bonus: 20 },
+  { name: 'Hard', color: '#ff6b6b', time: [55, 60, 65, 110], check: 10, chase: 1.9, bonus: 40 },
+];
+const diff = () => DIFFS[game.diff];
 
 // ---------------------------------------------------------------- input
 const keys = {};
@@ -518,9 +524,10 @@ function popup(x, y, text, color = '#fff') { popups.push({ x, y, text, color, li
 let game = {
   state: 'title', mode: 1, sel: 0, world: 0, unlocked: 1, score: 0, coins: 0, lives: 5,
   players: [], ents: [], cam: { x: 0 }, t: 0, timer: 0, levelCoins: 0, totalCoins: 0, check: null,
-  fireworks: [], best: 0, levelTime: 0, timeLeft: 0, timeMax: 0, timeBonus: 0, chaseX: null, stars: [false, false, false], bestStars: [], boss: null, freeze: 0, look: 0, shake: 0,
+  fireworks: [], best: 0, levelTime: 0, diff: 1, timeLeft: 0, timeMax: 0, timeBonus: 0, chaseX: null, stars: [false, false, false], bestStars: [], boss: null, freeze: 0, look: 0, shake: 0,
 };
-try { game.unlocked = Math.max(1, Math.min(LEVELS.length, +localStorage.getItem('ak_unlocked') || 1)); game.best = +localStorage.getItem('ak_best') || 0; game.bestStars = JSON.parse(localStorage.getItem('ak_stars') || '[]'); } catch (e) {}
+try { game.unlocked = Math.max(1, Math.min(LEVELS.length, +localStorage.getItem('ak_unlocked') || 1)); game.best = +localStorage.getItem('ak_best') || 0; game.bestStars = JSON.parse(localStorage.getItem('ak_stars') || '[]');
+  const d = localStorage.getItem('ak_diff'); if (d !== null && DIFFS[+d]) game.diff = +d; } catch (e) {}
 if (DEBUG) game.unlocked = LEVELS.length;
 
 function makePlayer(who, idx) {
@@ -543,7 +550,7 @@ function loadLevel(i) {
   lv = { w: src.w, theme: src.theme, name: src.name, g: src.g.map(r => r.slice()), start: src.start };
   game.ents = []; parts = []; popups = []; game.fireworks = [];
   game.totalCoins = 0; game.levelCoins = 0; game.levelTime = 0;
-  game.timeMax = LEVEL_TIME[i] * 60; game.timeLeft = game.timeMax; game.timeBonus = 0;
+  game.timeMax = diff().time[i] * 60; game.timeLeft = game.timeMax; game.timeBonus = 0;
   game.chaseX = src.theme === 'sky' ? -320 : null;
   game.stars = [false, false, false]; game.boss = null; game.freeze = 0; game.look = 0; game.shake = 0;
   bumpAnim.clear(); cannonTimers.clear();
@@ -686,7 +693,7 @@ function update() {
     game.timeLeft = game.timeMax;
   }
   // the storm: in chase levels the screen's left edge keeps creeping forward
-  if (game.chaseX !== null) game.chaseX = Math.min(lv.w * T - VW, game.chaseX + CHASE_SPEED);
+  if (game.chaseX !== null) game.chaseX = Math.min(lv.w * T - VW, game.chaseX + diff().chase);
 
   // entities first (platforms move, riders carried)
   for (const e of game.ents) updateEnt(e);
@@ -820,7 +827,7 @@ function updatePlayer(p) {
     if (e.k === 'check') {
       if (!e.on && overlap(p, e)) {
         e.on = true; game.check = { x: e.x - 4, y: e.y + e.h }; SFX.check();
-        game.timeLeft += 20 * 60; popup(e.x + 8, e.y - 30, '+20 TIME', '#bff');
+        game.timeLeft += diff().check * 60; popup(e.x + 8, e.y - 30, '+' + diff().check + ' TIME', '#bff');
         burst(e.x + 8, e.y + 10, '#7dff7d', 16, 4); popup(e.x + 8, e.y - 10, 'CHECKPOINT!', '#7dff7d');
         game.players.forEach(q => { if (!q.dead) q.hearts = Math.max(q.hearts, 3); });
       }
@@ -877,7 +884,7 @@ function reachGoal(p, e) {
   game.state = 'goal'; game.timer = 0; game.goal = e;
   const hgt = Math.max(0, Math.min(1, (e.y + e.h - (p.y + p.h)) / e.h));
   const bonus = Math.round(hgt * 50) * 100 + 500;
-  game.timeBonus = Math.floor(game.timeLeft / 60) * 20;
+  game.timeBonus = Math.floor(game.timeLeft / 60) * diff().bonus;
   game.score += bonus + game.timeBonus; popup(e.x, p.y - 10, '+' + bonus, '#ffe14a');
   stopSong(); SFX.win();
   game.players.forEach(q => { if (q.dead) respawn(q); q.finished = true; q.vx = 0; q.vy = 0; q.inv = 0; });
@@ -1101,8 +1108,10 @@ function onPress(code) {
     initAudio(); playSong('title');
     if (code === 'ArrowLeft' || code === 'KeyA') { game.sel = (game.sel + 2) % 3; SFX.select(); }
     if (code === 'ArrowRight' || code === 'KeyD') { game.sel = (game.sel + 1) % 3; SFX.select(); }
-    if (code === 'ArrowUp' || code === 'KeyW') { game.world = (game.world + game.unlocked - 1) % game.unlocked; SFX.select(); }
-    if (code === 'ArrowDown' || code === 'KeyS') { game.world = (game.world + 1) % game.unlocked; SFX.select(); }
+    if (code === 'ArrowUp' || code === 'KeyW') setDiff(game.diff + 2);
+    if (code === 'ArrowDown' || code === 'KeyS') setDiff(game.diff + 1);
+    const num = /^(Digit|Numpad)([1-9])$/.exec(code);
+    if (num && +num[2] <= game.unlocked) { game.world = +num[2] - 1; SFX.select(); }
     if (go) chooseSel();
   } else if (game.state === 'done') { if (go && game.timer > 30) loadLevel(game.world + 1); }
   else if (game.state === 'gameover' || game.state === 'victory') {
@@ -1111,6 +1120,7 @@ function onPress(code) {
   if (DEBUG && code === 'KeyN' && game.state === 'play') { const g = game.ents.find(e => e.k === 'goal'); const p = game.players[0]; p.x = g.x - 40; p.y = g.y + g.h - p.h; }
   if (DEBUG && code === 'KeyF' && game.state === 'play') { game.players.forEach(p => { p.x += 20 * T; p.y = 2 * T; }); }
 }
+function setDiff(d) { game.diff = (d + DIFFS.length) % DIFFS.length; SFX.select(); try { localStorage.setItem('ak_diff', game.diff); } catch (e) {} }
 function chooseSel() {
   SFX.power();
   if (game.sel === 2) startGame(2); else startGame(1, game.sel === 0 ? 'ayla' : 'kameel');
@@ -1126,6 +1136,7 @@ function onClick(pt) {
     playSong('title');
     for (const b of menuButtons) if (pt.x > b.x && pt.x < b.x + b.w && pt.y > b.y && pt.y < b.y + b.h) {
       if (b.act === 'sel') { game.sel = b.v; chooseSel(); }
+      if (b.act === 'diff') setDiff(game.diff + b.v);
       if (b.act === 'world') { game.world = (game.world + b.v + game.unlocked) % game.unlocked; SFX.select(); }
       return;
     }
@@ -1792,7 +1803,7 @@ function drawHUD() {
   text('lives', hx + 6, 50, 11, '#fff', 'left', '#222', 3);
   drawCoin(hx + 70, 33, 0, 10);
   text('×' + game.coins, hx + 86, 34, 20, '#fff', 'left');
-  text(`World ${game.world + 1}: ${lv.name}`, VW - 16, 88, 14, '#fff', 'right', '#222', 4);
+  text(`World ${game.world + 1}: ${lv.name}  ·  ${diff().name}`, VW - 16, 88, 14, '#fff', 'right', '#222', 4);
   text('Score ' + game.score, VW - 16, 68, 18, '#ffe14a', 'right', '#222', 5);
   const secs = Math.max(0, Math.ceil(game.timeLeft / 60)), low = secs <= 30;
   const tcol = low ? (Math.floor(game.t / 15) % 2 ? '#ff5a5a' : '#fff') : '#fff';
@@ -1843,19 +1854,24 @@ function drawTitle() {
     text(o.sub, bx + bw / 2, by + 278 + lift, Math.round(18 * ks), sel ? '#fff' : '#5a3a7a', 'center', sel ? '#2b1a3a' : null, 4);
     menuButtons.push({ x: bx, y: by, w: bw, h: bh, act: 'sel', v: i });
   });
-  // world chooser
-  const wy = 478;
+  // world chooser (left) and difficulty chooser (right)
+  const wy = 478, wx = VW * 0.27, dx = VW * 0.75, aw = Math.min(150, VW * 0.19), fs = VW < 800 ? 17 : 21;
   if (game.unlocked > 1) {
-    text('◀', VW / 2 - 190, wy + 22, 26, '#fff'); text('▶', VW / 2 + 190, wy + 22, 26, '#fff');
-    menuButtons.push({ x: VW / 2 - 220, y: wy, w: 60, h: 44, act: 'world', v: -1 }, { x: VW / 2 + 160, y: wy, w: 60, h: 44, act: 'world', v: 1 });
+    text('◀', wx - aw, wy + 22, 24, '#fff'); text('▶', wx + aw, wy + 22, 24, '#fff');
+    menuButtons.push({ x: wx - aw - 30, y: wy - 4, w: 60, h: 52, act: 'world', v: -1 }, { x: wx + aw - 30, y: wy - 4, w: 60, h: 52, act: 'world', v: 1 });
   }
   const bs = game.bestStars[game.world] || 0;
-  text(`World ${game.world + 1}: ${LEVELS[game.world].name}`, VW / 2, wy + 12, 22, '#fff');
-  text('★'.repeat(bs) + '☆'.repeat(3 - bs), VW / 2, wy + 36, 18, '#ffe14a', 'center', '#222', 4);
+  text(`World ${game.world + 1}: ${LEVELS[game.world].name}`, wx, wy + 12, fs, '#fff');
+  text('★'.repeat(bs) + '☆'.repeat(3 - bs), wx, wy + 36, 17, '#ffe14a', 'center', '#222', 4);
+  const df = diff();
+  text('◀', dx - aw * 0.75, wy + 22, 24, '#fff'); text('▶', dx + aw * 0.75, wy + 22, 24, '#fff');
+  menuButtons.push({ x: dx - aw * 0.75 - 30, y: wy - 4, w: 60, h: 52, act: 'diff', v: -1 }, { x: dx + aw * 0.75 - 30, y: wy - 4, w: 60, h: 52, act: 'diff', v: 1 });
+  text(df.name, dx, wy + 12, fs + 3, df.color, 'center', '#222', 5);
+  text(df.time[game.world] + ' seconds', dx, wy + 36, 15, '#fff', 'center', '#222', 4);
   const blink = Math.floor(game.t / 30) % 2;
   if (blink) text(TOUCH.on ? 'Tap a player to start!' : 'Click a player, or press ENTER, to start!', VW / 2, 452, 16, '#ffe14a', 'center', '#222', 4);
   text(game.best ? 'Best ' + game.best : '', VW - 12, 532, 13, '#fff', 'right', '#222', 3);
-  if (!TOUCH.on) text('Space: jump  ·  X: swap kid  ·  2P: A/D/W + ←/→/↑', 12, 532, 13, '#fff', 'left', '#222', 3);
+  if (!TOUCH.on && VW > 900) text('↑ ↓ difficulty  ·  1-4 world  ·  Space jump  ·  X swap kid', 12, 534, 12, '#fff', 'left', '#222', 3);
 }
 
 function drawIntro() {

@@ -21,7 +21,8 @@ The characters are fully hand-drawn cartoons, and the game runs in the browser w
   - ⭐ **Super Star** makes you invincible for a while.
   - ❤️ **Heart** gives you an extra heart.
 - Find the **3 big stars** hidden in every world.
-- **Beat the clock!** Every world has a countdown. The music speeds up for the last 30 seconds, and running out costs a life. Checkpoints add 20 seconds, and leftover time becomes bonus points.
+- **Beat the clock!** Every world has a countdown. The music speeds up for the last 30 seconds, and running out costs a life. Checkpoints add a little time, and leftover time becomes bonus points.
+- **Difficulty:** choose Easy, Normal or Hard on the title screen (↑ ↓ on a keyboard). Harder settings give you less time and a faster storm, but more bonus points per second left.
 - Collect 50 smiley coins to earn an extra life. Touch a green checkpoint flag to save your spot.
 
 ## Worlds
