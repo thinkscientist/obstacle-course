@@ -10,23 +10,17 @@ const ctx = cv.getContext('2d');
 const params = new URLSearchParams(location.search);
 const DEBUG = params.has('debug');
 
-// ---------------------------------------------------------------- images
-const IMG = {};
-function loadImg(k, src) { const i = new Image(); i.src = src; IMG[k] = i; }
-loadImg('ayla', 'assets/ayla-head.png');
-loadImg('kameel', 'assets/kameel-head.png');
-
 // ---------------------------------------------------------------- characters
 const CHARS = {
   ayla: {
-    name: 'Ayla', speed: 4.1, jump: 11.8, tag: 'Super Jumper!', color: '#ff6fa8', skin: '#c08a66',
+    name: 'Ayla', speed: 4.1, jump: 11.8, tag: 'Super Jumper!', color: '#ff6fa8', skin: '#c9946e',
     shirt: '#ff5fa2', shirtDark: '#d94484', overalls: '#8a4fd8', overallsDark: '#6d38b5',
-    boots: '#ffc93c', bootsDark: '#e0a820', emblem: 'star'
+    boots: '#ffc93c', bootsDark: '#e0a820', emblem: 'star', hair: '#3a2418', hairShine: 'rgba(255,220,180,.35)'
   },
   kameel: {
-    name: 'Kameel', speed: 4.9, jump: 11.0, tag: 'Super Speedy!', color: '#4fb3ff', skin: '#b07a5a',
+    name: 'Kameel', speed: 4.9, jump: 11.0, tag: 'Super Speedy!', color: '#4fb3ff', skin: '#bd8762',
     shirt: '#35c46a', shirtDark: '#249a4e', overalls: '#2f6fe0', overallsDark: '#2255b5',
-    boots: '#ff8a2a', bootsDark: '#d96c12', emblem: 'bolt'
+    boots: '#ff8a2a', bootsDark: '#d96c12', emblem: 'bolt', hair: '#1c1512', hairShine: 'rgba(255,255,255,.28)'
   }
 };
 
@@ -1113,15 +1107,79 @@ function text(s, x, y, size, color = '#fff', align = 'center', stroke = '#2b1a3a
   if (stroke) { ctx.lineJoin = 'round'; ctx.lineWidth = sw; ctx.strokeStyle = stroke; ctx.strokeText(s, x, y); }
   ctx.fillStyle = color; ctx.fillText(s, x, y);
 }
+// Cartoon head, drawn to match the kid: x = center, y = chin, hh = height
 function drawHead(who, x, y, hh) {
-  const im = IMG[who];
-  if (im.complete && im.naturalWidth) {
-    const w = hh * im.naturalWidth / im.naturalHeight;
-    ctx.drawImage(im, x - w / 2, y - hh, w, hh);
-  } else { ctx.fillStyle = CHARS[who].skin; ctx.beginPath(); ctx.arc(x, y - hh / 2, hh / 2, 0, 7); ctx.fill(); }
+  const ch = CHARS[who], k = hh / 36, OL = '#2b1a3a';
+  const blink = (game.t + (who === 'ayla' ? 0 : 97)) % 210 < 7;
+  ctx.save(); ctx.translate(x, y); ctx.scale(k, k);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = 1.5; ctx.strokeStyle = OL;
+  const shape = fill => { ctx.fillStyle = fill; ctx.fill(); ctx.stroke(); };
+  const HAIR = ch.hair, SHINE = ch.hairShine;
+  if (who === 'ayla') {
+    // long wavy hair behind the face, tucked back with wispy ends
+    ctx.beginPath(); ctx.moveTo(0, -36);
+    ctx.bezierCurveTo(-13, -37, -19, -27, -17.5, -17); ctx.bezierCurveTo(-19.5, -10, -17, -4, -19, 0.5);
+    ctx.bezierCurveTo(-14.5, 0, -11, -2.5, -10, -7); ctx.lineTo(10, -7);
+    ctx.bezierCurveTo(11, -2.5, 14.5, 0, 19, 0.5); ctx.bezierCurveTo(17, -4, 19.5, -10, 17.5, -17);
+    ctx.bezierCurveTo(19, -27, 13, -37, 0, -36); ctx.closePath(); shape(HAIR);
+  } else {
+    // ears
+    for (const s of [-1, 1]) { ctx.beginPath(); ctx.ellipse(s * 13.2, -13.5, 3.2, 4.2, 0, 0, 7); shape(ch.skin); ctx.beginPath(); ctx.arc(s * 13.4, -13.5, 1.5, s > 0 ? -1.2 : 1.9, s > 0 ? 1.2 : 4.3); ctx.stroke(); }
+  }
+  // face
+  ctx.beginPath(); ctx.moveTo(-12.5, -19); ctx.bezierCurveTo(-13, -8, -8, -0.5, 0, -0.5); ctx.bezierCurveTo(8, -0.5, 13, -8, 12.5, -19);
+  ctx.bezierCurveTo(12, -30, -12, -30, -12.5, -19); ctx.closePath(); shape(ch.skin);
+  // cheeks
+  ctx.fillStyle = 'rgba(255,110,120,.35)'; ctx.beginPath(); ctx.ellipse(-8, -9.5, 3, 2, 0, 0, 7); ctx.ellipse(8, -9.5, 3, 2, 0, 0, 7); ctx.fill();
+  if (who === 'ayla') {
+    // hair on top, parted, with a headband
+    ctx.beginPath(); ctx.moveTo(-13.2, -17); ctx.bezierCurveTo(-15, -30, -8, -36.5, 0, -36.5); ctx.bezierCurveTo(8, -36.5, 15, -30, 13.2, -17);
+    ctx.bezierCurveTo(12, -23, 7, -27.5, 1, -27.5); ctx.bezierCurveTo(-6, -27.5, -11.5, -23, -13.2, -17); ctx.closePath(); shape(HAIR);
+    ctx.strokeStyle = '#11101a'; ctx.lineWidth = 2.4; ctx.beginPath(); ctx.moveTo(-13.5, -25.5); ctx.bezierCurveTo(-9, -35, 9, -35, 13.5, -25.5); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.moveTo(-6, -32.2); ctx.quadraticCurveTo(0, -33.6, 6, -32.2); ctx.stroke();
+    // loose strands
+    ctx.strokeStyle = HAIR; ctx.lineWidth = 1.3; ctx.beginPath();
+    ctx.moveTo(-12.5, -21); ctx.quadraticCurveTo(-13.5, -14, -11.5, -9.5); ctx.moveTo(12.5, -21); ctx.quadraticCurveTo(13.5, -14, 11.5, -9.5);
+    ctx.moveTo(-4, -36); ctx.quadraticCurveTo(-6, -39.5, -9, -39); ctx.moveTo(5, -36); ctx.quadraticCurveTo(8, -39.5, 10.5, -38); ctx.stroke();
+  } else {
+    // short hair with a straight fringe
+    ctx.beginPath(); ctx.moveTo(-13.6, -15.5); ctx.bezierCurveTo(-17, -30, -9, -37, 0, -37); ctx.bezierCurveTo(9, -37, 17, -30, 13.6, -15.5);
+    ctx.lineTo(11.2, -20.5); ctx.lineTo(8.8, -22.5); ctx.lineTo(6.2, -21); ctx.lineTo(3.4, -22.8); ctx.lineTo(0.6, -21.2); ctx.lineTo(-2.4, -22.8); ctx.lineTo(-5.4, -21); ctx.lineTo(-8.4, -22.6); ctx.lineTo(-11.2, -20.5);
+    ctx.closePath(); shape(HAIR);
+    ctx.strokeStyle = HAIR; ctx.lineWidth = 1.3; ctx.beginPath(); ctx.moveTo(1, -37); ctx.quadraticCurveTo(2, -40, 4.5, -40); ctx.moveTo(-2, -37); ctx.quadraticCurveTo(-2, -39.5, -4, -40); ctx.stroke();
+  }
+  // hair shine
+  ctx.strokeStyle = SHINE; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(-9, -29.5); ctx.quadraticCurveTo(-6, -33.3, -1.5, -33.8); ctx.stroke();
+  // eyes
+  ctx.strokeStyle = OL; ctx.lineWidth = 1.2;
+  const ey = who === 'ayla' ? -15.5 : -15, er = who === 'ayla' ? 4.1 : 3.5;
+  for (const s of [-1, 1]) {
+    if (blink) { ctx.beginPath(); ctx.arc(s * 5.2, ey - 1, 3, 0.25, Math.PI - 0.25); ctx.stroke(); continue; }
+    ctx.beginPath(); ctx.ellipse(s * 5.2, ey, er * 0.82, er, 0, 0, 7); shape('#fff');
+    ctx.fillStyle = '#4a2a16'; ctx.beginPath(); ctx.arc(s * 5.2 + 0.5, ey + 0.4, er * 0.58, 0, 7); ctx.fill();
+    ctx.fillStyle = '#16100c'; ctx.beginPath(); ctx.arc(s * 5.2 + 0.5, ey + 0.4, er * 0.3, 0, 7); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(s * 5.2 + 1.4, ey - 1, er * 0.22, 0, 7); ctx.fill();
+  }
+  // eyebrows
+  ctx.strokeStyle = HAIR; ctx.lineWidth = who === 'ayla' ? 1.3 : 1.7;
+  const by = who === 'ayla' ? -22 : (-20.2);
+  if (who === 'ayla') { ctx.beginPath(); ctx.moveTo(-8.2, by + 1); ctx.quadraticCurveTo(-5.2, by - 1.4, -2.4, by + 0.6); ctx.moveTo(8.2, by + 1); ctx.quadraticCurveTo(5.2, by - 1.4, 2.4, by + 0.6); ctx.stroke(); }
+  else { ctx.beginPath(); ctx.moveTo(-8, by + 1.4); ctx.quadraticCurveTo(-5.2, by + 0.2, -2.6, by + 1.2); ctx.moveTo(8, by + 1.4); ctx.quadraticCurveTo(5.2, by + 0.2, 2.6, by + 1.2); ctx.stroke(); }
+  // nose
+  ctx.strokeStyle = 'rgba(70,35,20,.6)'; ctx.lineWidth = 1.1; ctx.beginPath(); ctx.arc(0, -11.4, 1.5, 0.3, Math.PI - 0.3); ctx.stroke();
+  // big smile with teeth
+  ctx.strokeStyle = OL; ctx.lineWidth = 1.2;
+  const mw = who === 'ayla' ? 6.2 : 5.6, my = who === 'ayla' ? -8 : -7.6, md = who === 'ayla' ? 5.2 : 3.6;
+  ctx.beginPath(); ctx.moveTo(-mw, my); ctx.quadraticCurveTo(0, my + 1.2, mw, my); ctx.quadraticCurveTo(0, my + md * 2 - 1.2, -mw, my); ctx.closePath(); shape('#8a2f3a');
+  ctx.save(); ctx.clip();
+  ctx.fillStyle = '#fff'; ctx.fillRect(-mw, my - 1, mw * 2, 3.1);
+  if (who === 'ayla') { ctx.fillStyle = '#8a2f3a'; ctx.fillRect(-0.55, my, 1.1, 2.4); ctx.fillStyle = '#ff8f9c'; ctx.beginPath(); ctx.ellipse(0, my + md + 1.2, 3.2, 2, 0, 0, 7); ctx.fill(); }
+  ctx.restore();
+  ctx.beginPath(); ctx.moveTo(-mw, my); ctx.quadraticCurveTo(0, my + 1.2, mw, my); ctx.quadraticCurveTo(0, my + md * 2 - 1.2, -mw, my); ctx.stroke();
+  ctx.restore();
 }
 
-// Draw a kid: x = center, y = feet. Photo head on a chunky cartoon hero body:
+// Draw a kid: x = center, y = feet. Cartoon head on a chunky cartoon hero body:
 // overalls with gold buttons, a bright shirt, white gloves, big boots and an emblem.
 function drawKid(who, x, y, o = {}) {
   const ch = CHARS[who];
@@ -1167,7 +1225,7 @@ function drawKid(who, x, y, o = {}) {
   ctx.lineWidth = 1.6;
   leg(air ? 0.4 : swing, false);
   arm(air ? -2.1 : -swing * 0.95, false);
-  // head (photo)
+  // head
   const bob = air ? 0 : Math.abs(Math.sin(run)) * -1.5;
   ctx.save(); ctx.translate(1, -28 + bob); ctx.rotate((o.tilt || 0));
   drawHead(who, 0, 0, 34);

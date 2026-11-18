@@ -1,7 +1,7 @@
 # Ayla & Kameel's Super Obstacle Course
 
 A web platformer starring **Ayla** (Super Jumper!) and **Kameel** (Super Speedy!).
-It runs in the browser with no installs and no build step.
+The characters are fully hand-drawn cartoons, and the game runs in the browser with no installs and no build step.
 
 ## How to play
 
