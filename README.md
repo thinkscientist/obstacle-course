@@ -2,6 +2,7 @@
 
 A web platformer starring **Ayla** (Super Jumper!) and **Kameel** (Super Speedy!).
 The characters are fully hand-drawn cartoons, and the game runs in the browser with no installs and no build step.
+All the artwork is drawn in code (`art.js`): there are no image files apart from the app icons.
 
 ## How to play
 
