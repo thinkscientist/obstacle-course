@@ -19,14 +19,14 @@ loadImg('kameel', 'assets/kameel-head.png');
 // ---------------------------------------------------------------- characters
 const CHARS = {
   ayla: {
-    name: 'Ayla', speed: 4.1, jump: 11.8, tag: 'Super Jumper!',
-    skin: '#c08a66', shirt: '#ece1d0', pants: '#e6dac8', trim: '#d8cbb6',
-    longSleeves: true, longPants: true, socks: null, print: 'penguin', color: '#ff6fa8'
+    name: 'Ayla', speed: 4.1, jump: 11.8, tag: 'Super Jumper!', color: '#ff6fa8', skin: '#c08a66',
+    shirt: '#ff5fa2', shirtDark: '#d94484', overalls: '#8a4fd8', overallsDark: '#6d38b5',
+    boots: '#ffc93c', bootsDark: '#e0a820', emblem: 'star'
   },
   kameel: {
-    name: 'Kameel', speed: 4.9, jump: 11.0, tag: 'Super Speedy!',
-    skin: '#b07a5a', shirt: '#e9dfca', pants: '#e3d8c2', trim: '#d3c6ae',
-    longSleeves: false, longPants: false, socks: '#f4f4f4', print: 'smiley', color: '#4fb3ff'
+    name: 'Kameel', speed: 4.9, jump: 11.0, tag: 'Super Speedy!', color: '#4fb3ff', skin: '#b07a5a',
+    shirt: '#35c46a', shirtDark: '#249a4e', overalls: '#2f6fe0', overallsDark: '#2255b5',
+    boots: '#ff8a2a', bootsDark: '#d96c12', emblem: 'bolt'
   }
 };
 
@@ -1121,7 +1121,8 @@ function drawHead(who, x, y, hh) {
   } else { ctx.fillStyle = CHARS[who].skin; ctx.beginPath(); ctx.arc(x, y - hh / 2, hh / 2, 0, 7); ctx.fill(); }
 }
 
-// Draw a kid: x = center, y = feet
+// Draw a kid: x = center, y = feet. Photo head on a chunky cartoon hero body:
+// overalls with gold buttons, a bright shirt, white gloves, big boots and an emblem.
 function drawKid(who, x, y, o = {}) {
   const ch = CHARS[who];
   const face = o.face || 1, run = o.run || 0, air = o.air || false, scale = o.scale || 1;
@@ -1129,55 +1130,46 @@ function drawKid(who, x, y, o = {}) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(face * scale * (1 + squash * 0.02), scale * (1 - squash * 0.025));
-  const swing = air ? 0.6 : Math.sin(run) * 0.75;
-  const outline = '#3a2a2a';
-  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  // legs
+  const swing = air ? 0.6 : Math.sin(run) * 0.8;
+  const OL = '#2b1a3a';
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = 1.6; ctx.strokeStyle = OL;
+  const shape = (fill) => { ctx.fillStyle = fill; ctx.fill(); ctx.stroke(); };
   const leg = (ang, back) => {
-    ctx.save(); ctx.translate(back ? -2 : 2, -16); ctx.rotate(ang);
-    if (ch.longPants) {
-      ctx.fillStyle = back ? ch.trim : ch.pants; rr(-4, 0, 8, 13, 3); ctx.fill();
-      ctx.fillStyle = ch.skin; rr(-3.5, 11, 9, 4, 2); ctx.fill(); // bare feet
-    } else {
-      ctx.fillStyle = back ? ch.trim : ch.pants; rr(-4.5, 0, 9, 7, 3); ctx.fill();
-      ctx.fillStyle = ch.skin; ctx.fillRect(-3, 6, 6, 6);
-      ctx.fillStyle = ch.socks; rr(-3.5, 10, 10, 5, 2.5); ctx.fill();
-    }
+    ctx.save(); ctx.translate(back ? -3 : 3, -14); ctx.rotate(ang);
+    rr(-4.5, -1, 9, 10, 3); shape(back ? ch.overallsDark : ch.overalls);
+    rr(-5.5, 7, 13.5, 7.5, [3, 5, 3, 3]); shape(back ? ch.bootsDark : ch.boots);   // big boot
+    ctx.fillStyle = 'rgba(255,255,255,.45)'; rr(2.5, 8.5, 4, 2, 1); ctx.fill();
     ctx.restore();
   };
-  leg(air ? -0.5 : -swing, true);
-  // back arm
   const arm = (ang, back) => {
-    ctx.save(); ctx.translate(0, -27); ctx.rotate(ang);
-    if (ch.longSleeves) { ctx.fillStyle = back ? ch.trim : ch.shirt; rr(-3, 0, 6, 11, 3); ctx.fill(); ctx.fillStyle = ch.skin; ctx.beginPath(); ctx.arc(0, 12, 3, 0, 7); ctx.fill(); }
-    else { ctx.fillStyle = back ? ch.trim : ch.shirt; rr(-3.5, 0, 7, 5, 2); ctx.fill(); ctx.fillStyle = ch.skin; rr(-2.5, 4, 5, 9, 2.5); ctx.fill(); }
+    ctx.save(); ctx.translate(back ? 7 : -7, -27); ctx.rotate(ang);
+    rr(-3.5, -1, 7, 10, 3.5); shape(back ? ch.shirtDark : ch.shirt);
+    ctx.beginPath(); ctx.arc(0, 11.5, 4.6, 0, 7); shape('#fff');                      // glove
+    ctx.strokeStyle = 'rgba(43,26,58,.35)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(-3.6, 8.6); ctx.lineTo(3.6, 8.6); ctx.stroke();
     ctx.restore();
   };
-  arm(air ? -2.4 : swing * 0.9, true);
-  // torso
-  ctx.fillStyle = ch.shirt; rr(-8, -30, 16, 16, 5); ctx.fill();
-  ctx.strokeStyle = 'rgba(0,0,0,.12)'; ctx.lineWidth = 1; ctx.stroke();
-  // print
-  if (ch.print === 'penguin') {
-    for (const [px, py] of [[-3, -25], [3.5, -19]]) {
-      ctx.fillStyle = '#1d1d26'; ctx.beginPath(); ctx.ellipse(px, py, 2.6, 3.4, 0, 0, 7); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.ellipse(px, py + 0.8, 1.5, 2.2, 0, 0, 7); ctx.fill();
-      ctx.fillStyle = '#f2b233'; ctx.fillRect(px - 0.6, py - 2.4, 1.4, 1);
-    }
-  } else {
-    ctx.strokeStyle = '#3b3b3b'; ctx.lineWidth = 0.8;
-    for (const [px, py] of [[-3.5, -25], [3, -20], [-2, -17.5]]) {
-      ctx.beginPath(); ctx.arc(px, py, 2, 0, 7); ctx.stroke();
-      ctx.beginPath(); ctx.arc(px, py + 0.2, 1.1, 0.3, Math.PI - 0.3); ctx.stroke();
-    }
-  }
-  // hips / bottoms band
-  ctx.fillStyle = ch.pants; rr(-7.5, -17, 15, 5, 2); ctx.fill();
-  leg(air ? 0.35 : swing, false);
-  arm(air ? -2.0 : -swing * 0.9, false);
+  leg(air ? -0.55 : -swing, true);
+  arm(air ? -2.5 : swing * 0.95, true);
+  // shirt (round body)
+  rr(-10.5, -32, 21, 20, 8); shape(ch.shirt);
+  // overalls bib + straps
+  ctx.beginPath();
+  ctx.moveTo(-10.5, -21); ctx.lineTo(-7, -21); ctx.lineTo(-7, -30); ctx.lineTo(-3.5, -30); ctx.lineTo(-3.5, -24);
+  ctx.lineTo(3.5, -24); ctx.lineTo(3.5, -30); ctx.lineTo(7, -30); ctx.lineTo(7, -21); ctx.lineTo(10.5, -21);
+  ctx.lineTo(10.5, -16); ctx.quadraticCurveTo(10.5, -10.5, 5, -10.5); ctx.lineTo(-5, -10.5); ctx.quadraticCurveTo(-10.5, -10.5, -10.5, -16); ctx.closePath();
+  shape(ch.overalls);
+  // gold buttons
+  for (const bx of [-5.2, 5.2]) { ctx.beginPath(); ctx.arc(bx, -23, 1.9, 0, 7); ctx.fillStyle = '#ffd84a'; ctx.fill(); ctx.lineWidth = 1; ctx.stroke(); }
+  // emblem
+  ctx.lineWidth = 1;
+  if (ch.emblem === 'star') { star(0, -17, 4.6, 2.1); ctx.fillStyle = '#ffd84a'; ctx.fill(); ctx.stroke(); }
+  else { ctx.beginPath(); ctx.moveTo(1.6, -22); ctx.lineTo(-3.2, -16.4); ctx.lineTo(-0.3, -16.4); ctx.lineTo(-1.8, -12); ctx.lineTo(3.2, -17.8); ctx.lineTo(0.3, -17.8); ctx.closePath(); ctx.fillStyle = '#ffd84a'; ctx.fill(); ctx.stroke(); }
+  ctx.lineWidth = 1.6;
+  leg(air ? 0.4 : swing, false);
+  arm(air ? -2.1 : -swing * 0.95, false);
   // head (photo)
   const bob = air ? 0 : Math.abs(Math.sin(run)) * -1.5;
-  ctx.save(); ctx.translate(1, -26 + bob); ctx.rotate((o.tilt || 0));
+  ctx.save(); ctx.translate(1, -28 + bob); ctx.rotate((o.tilt || 0));
   drawHead(who, 0, 0, 34);
   ctx.restore();
   ctx.restore();
