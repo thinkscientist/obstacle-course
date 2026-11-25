@@ -25,7 +25,9 @@ const CHARS = {
 };
 
 // ---------------------------------------------------------------- audio
-const AU = { ctx: null, master: null, sfx: null, mus: null, echo: null, noiseBuf: null, p25: null,
+// A small synth: every sound is made from oscillators and noise, mixed through
+// an echo, a generated reverb and a compressor.
+const AU = { ctx: null, master: null, sfx: null, mus: null, echo: null, rev: null, noiseBuf: null, p25: null,
   muted: false, music: null, playing: null, step: 0, next: 0, timer: null };
 try { AU.muted = localStorage.getItem('ak_muted') === '1'; } catch (e) {}
 function initAudio() {
@@ -33,19 +35,25 @@ function initAudio() {
   try {
     const c = AU.ctx = new (window.AudioContext || window.webkitAudioContext)();
     const comp = c.createDynamicsCompressor();
-    comp.threshold.value = -14; comp.ratio.value = 5; comp.connect(c.destination);
-    AU.master = c.createGain(); AU.master.gain.value = AU.muted ? 0 : 0.8; AU.master.connect(comp);
-    AU.sfx = c.createGain(); AU.sfx.gain.value = 0.9; AU.sfx.connect(AU.master);
-    AU.mus = c.createGain(); AU.mus.gain.value = 0.6; AU.mus.connect(AU.master);
-    // echo bus for the lead melody
-    AU.echo = c.createDelay(1); AU.echo.delayTime.value = 0.26;
-    const fb = c.createGain(); fb.gain.value = 0.32;
-    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2400;
+    comp.threshold.value = -16; comp.ratio.value = 4; comp.attack.value = 0.005; comp.release.value = 0.2; comp.connect(c.destination);
+    AU.master = c.createGain(); AU.master.gain.value = AU.muted ? 0 : 0.85; AU.master.connect(comp);
+    AU.sfx = c.createGain(); AU.sfx.gain.value = 0.85; AU.sfx.connect(AU.master);
+    const tone0 = c.createBiquadFilter(); tone0.type = 'lowpass'; tone0.frequency.value = 9500; tone0.connect(AU.master); // takes the harsh edge off
+    AU.mus = c.createGain(); AU.mus.gain.value = 0.62; AU.mus.connect(tone0);
+    // echo for the lead melody
+    AU.echo = c.createDelay(1); AU.echo.delayTime.value = 0.27;
+    const fb = c.createGain(); fb.gain.value = 0.3;
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2200;
     AU.echo.connect(lp); lp.connect(fb); fb.connect(AU.echo); lp.connect(AU.mus);
-    // noise buffer for drums / effects
+    // noise for drums and effects
     const n = c.sampleRate, b = c.createBuffer(1, n, c.sampleRate), d = b.getChannelData(0);
     for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
     AU.noiseBuf = b;
+    // reverb: a generated impulse response (decaying stereo noise) gives the music some room
+    const len = Math.floor(c.sampleRate * 1.7), ir = c.createBuffer(2, len, c.sampleRate);
+    for (let ch = 0; ch < 2; ch++) { const x = ir.getChannelData(ch); for (let i = 0; i < len; i++) x[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.6); }
+    AU.rev = c.createConvolver(); AU.rev.buffer = ir;
+    const rg = c.createGain(); rg.gain.value = 0.55; AU.rev.connect(rg); rg.connect(AU.mus);
     // 25% pulse wave: the classic bright chiptune lead
     const N = 32, re = new Float32Array(N), im = new Float32Array(N);
     for (let k = 1; k < N; k++) re[k] = 2 / (k * Math.PI) * Math.sin(k * Math.PI * 0.25);
@@ -65,36 +73,56 @@ function tone(freq, dur, type = 'square', vol = 0.12, slide = null, when = 0) {
   o.connect(g); g.connect(AU.sfx);
   o.start(t0); o.stop(t0 + dur + 0.02);
 }
-function noise(dur, vol = 0.15, hp = 0, when = 0, dest = null) {
+function noise(dur, vol = 0.15, hp = 0, when = 0, dest = null, type = 'highpass') {
   if (!AU.ctx || SIM) return;
   const t0 = when || AU.ctx.currentTime;
   const s = AU.ctx.createBufferSource(), g = AU.ctx.createGain();
   s.buffer = AU.noiseBuf; s.loop = true;
   g.gain.setValueAtTime(vol, t0); g.gain.exponentialRampToValueAtTime(0.0008, t0 + dur);
-  if (hp) { const f = AU.ctx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = hp; s.connect(f); f.connect(g); } else s.connect(g);
+  if (hp) { const f = AU.ctx.createBiquadFilter(); f.type = type; f.frequency.value = hp; s.connect(f); f.connect(g); } else s.connect(g);
   g.connect(dest || AU.sfx); s.start(t0, Math.random() * 0.5); s.stop(t0 + dur + 0.02);
-}
-// musical voice with a soft envelope
-function voice(dest, wave, freq, t, dur, vol, detune = 0) {
-  const c = AU.ctx, o = c.createOscillator(), g = c.createGain();
-  if (wave === 'p25') o.setPeriodicWave(AU.p25); else o.type = wave;
-  o.frequency.value = freq; o.detune.value = detune;
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.linearRampToValueAtTime(vol, t + 0.008);
-  g.gain.setTargetAtTime(vol * 0.55, t + 0.01, 0.09);
-  g.gain.setTargetAtTime(0.0001, t + dur, 0.025);
-  o.connect(g); g.connect(dest);
-  o.start(t); o.stop(t + dur + 0.2);
   return g;
 }
-function kick(t) {
-  const c = AU.ctx, o = c.createOscillator(), g = c.createGain();
-  o.frequency.setValueAtTime(170, t); o.frequency.exponentialRampToValueAtTime(42, t + 0.12);
-  g.gain.setValueAtTime(0.5, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
-  o.connect(g); g.connect(AU.mus); o.start(t); o.stop(t + 0.2);
+// A musical note. o = { wave, f, t, dur, vol, detune, pan, cut, vib, att, sus, rel, rev, echo }
+function voice(o) {
+  const c = AU.ctx, osc = c.createOscillator(), g = c.createGain(), t = o.t;
+  if (o.wave === 'p25') osc.setPeriodicWave(AU.p25); else osc.type = o.wave;
+  osc.frequency.value = o.f; if (o.detune) osc.detune.value = o.detune;
+  if (o.vib && o.dur > 0.22) { // gentle vibrato that fades in on longer notes
+    const l = c.createOscillator(), lg = c.createGain(); l.frequency.value = 5.6;
+    lg.gain.setValueAtTime(0, t + 0.12); lg.gain.linearRampToValueAtTime(o.f * 0.011, t + 0.32);
+    l.connect(lg); lg.connect(osc.frequency); l.start(t); l.stop(t + o.dur + 0.3);
+  }
+  const att = o.att || 0.008;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(o.vol, t + att);
+  g.gain.setTargetAtTime(o.vol * (o.sus === undefined ? 0.6 : o.sus), t + att, 0.09);
+  g.gain.setTargetAtTime(0.0001, t + o.dur, o.rel || 0.03);
+  let node = g; osc.connect(g);
+  if (o.cut) { const f = c.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = o.cut; f.Q.value = 0.8; node.connect(f); node = f; }
+  if (o.pan && c.createStereoPanner) { const p = c.createStereoPanner(); p.pan.value = o.pan; node.connect(p); node = p; }
+  node.connect(AU.mus);
+  if (o.rev) { const s = c.createGain(); s.gain.value = o.rev; node.connect(s); s.connect(AU.rev); }
+  if (o.echo) { const s = c.createGain(); s.gain.value = o.echo; node.connect(s); s.connect(AU.echo); }
+  osc.start(t); osc.stop(t + o.dur + (o.rel || 0.03) * 6 + 0.05);
 }
-function snare(t) { noise(0.13, 0.2, 1400, t, AU.mus); const g = voice(AU.mus, 'triangle', 190, t, 0.05, 0.12); void g; }
-function hat(t, loud) { noise(0.035, loud ? 0.07 : 0.04, 7000, t, AU.mus); }
+function kick(t, v = 1) {
+  const c = AU.ctx, o = c.createOscillator(), g = c.createGain();
+  o.frequency.setValueAtTime(180, t); o.frequency.exponentialRampToValueAtTime(44, t + 0.11);
+  g.gain.setValueAtTime(0.55 * v, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+  o.connect(g); g.connect(AU.mus); o.start(t); o.stop(t + 0.22);
+  noise(0.012, 0.1 * v, 3000, t, AU.mus); // click
+}
+function snare(t, v = 1) {
+  const g = noise(0.16, 0.2 * v, 1800, t, AU.mus, 'bandpass');
+  if (g) { const s = AU.ctx.createGain(); s.gain.value = 0.35; g.connect(s); s.connect(AU.rev); }
+  noise(0.09, 0.08 * v, 5000, t, AU.mus);
+  const c = AU.ctx, o = c.createOscillator(), og = c.createGain(); o.type = 'triangle';
+  o.frequency.setValueAtTime(230, t); o.frequency.exponentialRampToValueAtTime(150, t + 0.07);
+  og.gain.setValueAtTime(0.16 * v, t); og.gain.exponentialRampToValueAtTime(0.001, t + 0.09); o.connect(og); og.connect(AU.mus); o.start(t); o.stop(t + 0.1);
+}
+function hat(t, v = 1, open = false) { noise(open ? 0.16 : 0.035, 0.05 * v, 7500, t, AU.mus); }
+function crash(t) { const g = noise(0.9, 0.09, 5200, t, AU.mus); if (g) { const s = AU.ctx.createGain(); s.gain.value = 0.5; g.connect(s); s.connect(AU.rev); } }
 
 const seq = (arr, base, gap = 0.08, dur = 0.13, type = 'square', vol = 0.09) => { if (!AU.ctx) return; const t = AU.ctx.currentTime; arr.forEach((m, i) => tone(mtof(m + base), dur, type, vol, null, t + i * gap)); };
 const SFX = {
@@ -113,6 +141,7 @@ const SFX = {
   shoot: () => noise(0.12, 0.12),
   oneup: () => seq([76, 79, 88, 84, 86, 91], 0, 0.09, 0.12, 'square', 0.08),
   select: () => tone(660, 0.08, 'square', 0.08, 990),
+  swim: () => { tone(300, 0.12, 'sine', 0.1, 520); noise(0.08, 0.03, 1500); },
   swap: () => { tone(500, 0.1, 'triangle', 0.12, 1000); tone(750, 0.12, 'triangle', 0.1, 1500, AU.ctx ? AU.ctx.currentTime + 0.07 : 0); },
   bigstar: () => seq([72, 76, 79, 84, 88, 91, 96], 0, 0.07, 0.25, 'triangle', 0.13),
   bosshit: () => { tone(160, 0.3, 'sawtooth', 0.16, 50); noise(0.2, 0.2); },
@@ -160,38 +189,72 @@ const SONG_DEFS = {
     chords: ['C', 'F', 'G', 'C', 'Am', 'F', 'G', 'C'],
     mel: ['C5 E5 G5 C6 G5 E5 C5 E5', 'F5 A5 C6 F6 C6 A5 F5 A5', 'G5 B5 D6 G6 D6 B5 G5 B5', 'C6 . C6 . C6 - - .',
           'E6 . C6 A5 E6 . C6 A5', 'F6 . C6 A5 F6 . C6 A5', 'G6 . D6 B5 G6 . B5 D6', 'C6 - . G5 C6 - - .'] },
+  woods: { tempo: 118, bass: 'walk', arp: 'arp8', drums: 'soft', wave: 'triangle', echo: 0.5, leadVol: 0.12, swing: 0.14,
+    chords: ['Em', 'C', 'Am', 'B', 'Em', 'G', 'Am,B', 'Em', 'C', 'D', 'Em', 'Em', 'C', 'D', 'B', 'B'],
+    mel: ['E5 . G5 . B5 - A5 G5', 'E5 . G5 . C6 - B5 A5', 'A5 . C6 . E6 - D6 C6', 'B5 - F#5 - D#5 - B4 .',
+          'E5 . G5 . B5 - A5 G5', 'D6 - B5 - G5 - B5 D6', 'C6 - A5 - B5 - D#6 -', 'E6 - - - E5 - . .',
+          'G5 E5 C5 E5 G5 - C6 -', 'A5 F#5 D5 F#5 A5 - D6 -', 'B5 G5 E5 G5 B5 - E6 -', 'D6 - B5 - G5 - E5 .',
+          'C6 - G5 - E5 - G5 -', 'D6 - A5 - F#5 - A5 -', 'D#6 - B5 - F#5 - B5 -', 'B5 A5 G5 F#5 D#5 - B4 .'] },
+  reef: { tempo: 104, bass: 'slow', arp: 'arp16', drums: 'soft', wave: 'triangle', echo: 0.75, leadVol: 0.12,
+    chords: ['D', 'Bm', 'G', 'A', 'D', 'F#m', 'G,A', 'D', 'G', 'A', 'F#m', 'Bm', 'G', 'A', 'D', 'D'],
+    mel: ['F#5 - A5 - D6 - A5 -', 'F#5 - B5 - D6 - B5 -', 'G5 - B5 - D6 - B5 G5', 'A5 - C#6 - E6 - - .',
+          'F#5 - A5 - D6 - F#6 -', 'E6 - C#6 - A5 - C#6 -', 'D6 B5 G5 B5 E6 C#6 A5 C#6', 'D6 - - - A5 - D6 .',
+          'B5 - D6 - G6 - F#6 D6', 'A5 - C#6 - E6 - D6 C#6', 'A5 - C#6 - F#6 - E6 C#6', 'D6 - B5 - F#5 - B5 -',
+          'G5 B5 D6 B5 G5 B5 D6 -', 'A5 C#6 E6 C#6 A5 C#6 E6 -', 'F#6 - E6 D6 - A5 D6 -', 'D6 - - - - . . .'] },
+  desert: { tempo: 132, bass: 'bounce', arp: 'stab', drums: 'bouncy', swing: 0.1,
+    chords: ['Am', 'Am', 'Dm', 'E', 'Am', 'F', 'E', 'Am', 'Dm', 'Am', 'E', 'Am', 'Dm', 'Am', 'F,E', 'Am'],
+    mel: ['A5 . A5 B5 C6 . B5 A5', 'G#5 . A5 . E5 - - .', 'D6 . D6 E6 F6 . E6 D6', 'E6 . D6 C6 B5 . G#5 .',
+          'A5 . A5 B5 C6 . E6 .', 'F6 . E6 . C6 . A5 .', 'G#5 B5 D6 . C6 B5 G#5 .', 'A5 - - . A5 A5 . .',
+          'F5 A5 D6 . F5 A5 D6 .', 'E5 A5 C6 . E5 A5 C6 .', 'E5 G#5 B5 . D6 . B5 G#5', 'A5 . C6 . E6 - - .',
+          'F6 . E6 D6 . A5 D6 .', 'E6 . D6 C6 . A5 C6 .', 'C6 A5 F5 A5 B5 G#5 E5 G#5', 'A5 - - . E5 . A5 .'] },
 };
+// the other bosses get the boss theme in a different key and speed
+SONG_DEFS.boss2 = { ...SONG_DEFS.boss, tempo: 160, transpose: -2 };
+SONG_DEFS.boss3 = { ...SONG_DEFS.boss, tempo: 166, transpose: 3, wave: 'p25', leadVol: 0.065 };
+SONG_DEFS.boss4 = { ...SONG_DEFS.boss, tempo: 178, transpose: 5 };
+Object.assign(SONG_DEFS.meadow, { swing: 0.1 }); Object.assign(SONG_DEFS.sky, { swing: 0.12 }); Object.assign(SONG_DEFS.title, { swing: 0.08 });
+
 const BASS = { bounce: [0, null, 12, null, 0, null, 7, null], drive: [0, 0, 12, 0, 0, 0, 12, 0], walk: [0, null, 7, null, 12, null, 7, null], slow: [0, null, null, null, 7, null, null, null] };
+// kick / snare / hat per 16th note. X = accent, o = open hat
 const DRUMS = {
-  pop: ['x.......x.x.....', '....x.......x...', 'x.x.x.x.x.x.x.x.'],
-  soft: ['x.........x.....', '........x.......', '..x...x...x...x.'],
-  bouncy: ['x.....x.x.....x.', '....x.......x..x', 'x.xxx.xxx.xxx.xx'],
-  heavy: ['x.x...x.x.x...x.', '....x.......x...', 'x.x.x.x.x.x.x.x.'],
+  pop: ['X.......x.x.....', '....X.......X...', 'x.x.X.x.x.x.X.o.'],
+  soft: ['X.........x.....', '........x.......', '..x...x...x...o.'],
+  bouncy: ['X.....x.x.....x.', '....X.......X..x', 'x.xxX.xxx.xxX.ox'],
+  heavy: ['X.x...x.X.x...x.', '....X.......X...', 'x.x.X.x.x.x.X.x.'],
 };
 const NOTE = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 function nm(s) { const m = /^([A-G])([#b]?)(\d)$/.exec(s); return 12 * (+m[3] + 1) + NOTE[m[1]] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0); }
-function chord(s) { const m = /^([A-G])([#b]?)(m?)$/.exec(s); const root = NOTE[m[1]] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0); return { root, tri: [0, m[3] ? 3 : 4, 7, 12] }; }
+function chord(s, tr) { const m = /^([A-G])([#b]?)(m?)$/.exec(s); const root = (NOTE[m[1]] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0) + tr + 24) % 12; return { root, tri: [0, m[3] ? 3 : 4, 7, 12] }; }
 function compileSong(def) {
-  const n = def.mel.length * 16;
-  const s = { tempo: def.tempo, n, lead: new Array(n).fill(null), bass: new Array(n).fill(null), arp: new Array(n).fill(null),
-    drums: DRUMS[def.drums], wave: def.wave || 'p25', echo: def.echo || 0.25, leadVol: def.leadVol || 0.065 };
-  let last = null;
-  def.mel.forEach((bar, b) => bar.trim().split(/\s+/).forEach((tok, i) => {
-    const st = b * 16 + i * 2;
-    if (tok === '-') { if (last) last.len += 2; } else if (tok === '.') last = null; else { last = { m: nm(tok), len: 2 }; s.lead[st] = last; }
-  }));
+  const n = def.mel.length * 16, tr = def.transpose || 0;
+  const s = { tempo: def.tempo, n, lead: new Array(n).fill(null), harm: new Array(n).fill(null), bass: new Array(n).fill(null), arp: new Array(n).fill(null), pad: new Array(n).fill(null),
+    drums: DRUMS[def.drums], wave: def.wave || 'p25', echo: def.echo || 0.22, leadVol: def.leadVol || 0.065, swing: def.swing || 0 };
+  const chordAt = [];
   def.chords.forEach((cs, b) => {
     const cp = cs.split(',');
     for (let i = 0; i < 8; i++) {
-      const ch = chord(cp[Math.floor(i * cp.length / 8)]), st = b * 16 + i * 2;
+      const ch = chord(cp[Math.floor(i * cp.length / 8)], tr), st = b * 16 + i * 2;
+      chordAt[st] = chordAt[st + 1] = ch;
       const root = ch.root > 7 ? ch.root - 12 : ch.root;
       const bo = BASS[def.bass][i];
       if (bo !== null) s.bass[st] = { m: 36 + root + bo, len: def.bass === 'slow' ? 7 : 1.7 };
       if (def.arp === 'arp16') { for (let k = 0; k < 2; k++) s.arp[st + k] = { m: [60 + root + ch.tri[[0, 1, 2, 1, 3, 2, 1, 2][(i * 2 + k) % 8]]] }; }
       else if (def.arp === 'arp8') s.arp[st] = { m: [60 + root + ch.tri[[0, 1, 2, 3, 2, 1, 2, 1][i]]] };
       else if (i % 2 === 1) s.arp[st] = { m: [60 + root + ch.tri[0], 60 + root + ch.tri[1], 60 + root + ch.tri[2]] };
+      if (i % (8 / cp.length) === 0) s.pad[st] = { m: [48 + root + ch.tri[0], 48 + root + ch.tri[2], 60 + root + ch.tri[1]], len: 16 / cp.length };
     }
   });
+  let last = null;
+  def.mel.forEach((bar, b) => bar.trim().split(/\s+/).forEach((tok, i) => {
+    const st = b * 16 + i * 2;
+    if (tok === '-') { if (last) last.len += 2; } else if (tok === '.') last = null; else {
+      last = { m: nm(tok) + tr, len: 2 }; s.lead[st] = last;
+      // harmony: the nearest chord note a third or more below the tune
+      const ch = chordAt[st]; let hm = null;
+      for (let d = 3; d <= 9; d++) if (ch.tri.includes(((last.m - d - ch.root) % 12 + 12) % 12)) { hm = last.m - d; break; }
+      if (hm !== null) s.harm[st] = { m: hm, of: last };
+    }
+  }));
   return s;
 }
 const SONGS = {}; for (const k in SONG_DEFS) SONGS[k] = compileSong(SONG_DEFS[k]);
@@ -211,24 +274,36 @@ function musicTick() {
   const s = SONGS[want], sd = 60 / (s.tempo * (hurry ? 1.22 : 1)) / 4, c = AU.ctx;
   if (AU.next < c.currentTime) AU.next = c.currentTime + 0.03;
   while (AU.next < c.currentTime + 0.14) {
-    const i = AU.step % s.n, t = AU.next, b = i % 16;
+    const i = AU.step % s.n, b = i % 16, pass = Math.floor(AU.step / s.n), bar = Math.floor(i / 16);
+    const t = AU.next + (b % 2 ? s.swing * sd : 0);
+    const second = pass % 2 === 1;              // every other time through, the arrangement fills out
     const L = s.lead[i];
     if (L) {
-      const d = L.len * sd * 0.9, f = mtof(L.m);
-      const g1 = voice(AU.mus, s.wave, f, t, d, s.leadVol), g2 = voice(AU.mus, s.wave, f, t, d, s.leadVol * 0.5, 9);
-      const send = c.createGain(); send.gain.value = s.echo; g1.connect(send); g2.connect(send); send.connect(AU.echo);
+      const d = L.len * sd * 0.92, f = mtof(L.m), soft = s.wave === 'triangle';
+      voice({ wave: s.wave, f, t, dur: d, vol: s.leadVol, vib: true, cut: soft ? 0 : 3400, echo: s.echo, rev: 0.25 });
+      voice({ wave: s.wave, f, t, dur: d, vol: s.leadVol * 0.45, detune: 9, pan: 0.25, cut: soft ? 0 : 3000 });
+      if (second) voice({ wave: 'triangle', f: f * 2, t, dur: d * 0.6, vol: s.leadVol * 0.3, pan: -0.25, rev: 0.3 }); // sparkle an octave up
     }
-    const B = s.bass[i]; if (B) { voice(AU.mus, 'triangle', mtof(B.m), t, B.len * sd, 0.2); voice(AU.mus, 'square', mtof(B.m), t, B.len * sd * 0.7, 0.025); }
-    const A = s.arp[i]; if (A) for (const m of A.m) voice(AU.mus, 'square', mtof(m), t, sd * (A.m.length > 1 ? 1.1 : 0.8), A.m.length > 1 ? 0.018 : 0.02);
-    if (s.drums[0][b] === 'x') kick(t);
-    if (s.drums[1][b] === 'x') snare(t);
-    if (s.drums[2][b] === 'x') hat(t, b % 4 === 0);
+    const Hm = s.harm[i];
+    if (Hm && (second || bar >= s.n / 32)) voice({ wave: s.wave === 'sawtooth' ? 'sawtooth' : 'triangle', f: mtof(Hm.m), t, dur: Hm.of.len * sd * 0.9, vol: s.leadVol * 0.55, pan: -0.3, cut: 2400, rev: 0.25 });
+    const P = s.pad[i];
+    if (P) for (let k = 0; k < P.m.length; k++) voice({ wave: 'sawtooth', f: mtof(P.m[k]), t, dur: P.len * sd * 0.98, vol: 0.022, att: 0.12, sus: 0.9, rel: 0.12, cut: 900, pan: (k - 1) * 0.4, rev: 0.5 });
+    const B = s.bass[i];
+    if (B) { voice({ wave: 'triangle', f: mtof(B.m), t, dur: B.len * sd, vol: 0.2, sus: 0.75 }); voice({ wave: 'sawtooth', f: mtof(B.m), t, dur: B.len * sd * 0.6, vol: 0.05, cut: 500, sus: 0.3 }); }
+    const A = s.arp[i];
+    if (A) for (const m of A.m) voice({ wave: 'square', f: mtof(m + (second && A.m.length === 1 ? 12 : 0)), t, dur: sd * (A.m.length > 1 ? 1.1 : 0.8), vol: A.m.length > 1 ? 0.016 : 0.018, cut: 2600, pan: (i % 4 < 2 ? -0.4 : 0.4), rev: 0.2 });
+    // drums, with a snare fill at the end of every fourth bar and a crash on each section
+    const fill = bar % 4 === 3 && b >= 12, kc = s.drums[0][b], sc = s.drums[1][b], hc = s.drums[2][b];
+    if (kc !== '.') kick(t, kc === 'X' ? 1 : 0.8);
+    if (fill) snare(t, 0.55 + (b - 12) * 0.15); else if (sc !== '.') snare(t, sc === 'X' ? 1 : 0.7);
+    if (hc !== '.') hat(t, hc === 'X' ? 1.3 : 0.8, hc === 'o');
+    if (i % 128 === 0 && (pass > 0 || i > 0)) crash(t);
     AU.next += sd; AU.step++;
   }
 }
 function setMuted(m) {
   AU.muted = m;
-  if (AU.master) AU.master.gain.value = m ? 0 : 0.8;
+  if (AU.master) AU.master.gain.value = m ? 0 : 0.85;
   document.getElementById('mute').textContent = m ? '🔇' : '🔊';
   try { localStorage.setItem('ak_muted', m ? '1' : '0'); } catch (e) {}
 }
@@ -239,14 +314,20 @@ document.addEventListener('visibilitychange', () => {
 
 // ---------------------------------------------------------------- themes
 const THEMES = {
-  meadow: { song: 'meadow', sky: ['#5fbfff', '#c9efff'], dirt: '#9a6232', dirtDark: '#7a4a22', top: '#5ccf4a', topDark: '#3a9e33',
-            brick: '#d0703a', brickLine: '#8a3f17', plank: '#b8834a' },
-  ice: { song: 'ice', sky: ['#86c5f2', '#eef8ff'], dirt: '#7fa9cf', dirtDark: '#5f88b0', top: '#ffffff', topDark: '#cfe6f8',
-         brick: '#8fc6ea', brickLine: '#4f8cb8', plank: '#bfe3fa' },
-  sky: { song: 'sky', sky: ['#ff9fd0', '#ffe8b0'], dirt: '#b77de0', dirtDark: '#935cc0', top: '#ffd4f2', topDark: '#f3a8de',
-         brick: '#ff9c6b', brickLine: '#c4572b', plank: '#fff' },
-  castle: { song: 'castle', sky: ['#1c0b18', '#4a1414'], dirt: '#6d6c7d', dirtDark: '#4b4a5a', top: '#8b8aa0', topDark: '#5e5d72',
-            brick: '#7f5a5a', brickLine: '#3e2626', plank: '#7a5a3a' },
+  meadow: { song: 'meadow', brick: '#d0703a', tip: 'Stomp the Grumbles and find 3 big stars!' },
+  ice: { song: 'ice', brick: '#8fc6ea', tip: 'Ice is slippery! Watch out for falling icicles!' },
+  sky: { song: 'sky', brick: '#ff9c6b', tip: 'A storm is chasing you! Keep moving and beat the clock!' },
+  woods: { song: 'woods', brick: '#7a5a8c', tip: 'Ghosts are shy: look right at them and they freeze!' },
+  reef: { song: 'reef', brick: '#f08a6c', tip: 'Tap jump again and again to swim! Keep away from jellyfish.' },
+  desert: { song: 'desert', brick: '#d99a4e', tip: 'Jump the rolling boulders and mind the prickly cactus!' },
+  castle: { song: 'castle', brick: '#7f5a5a', tip: 'Dodge the fire and beat King Grumble!' },
+};
+// Every boss guards a gate at the end of its world and takes three stomps.
+const BOSS = {
+  bat: { name: 'COUNT FLAPULA', w: 70, h: 46, song: 'boss2' },
+  crab: { name: 'CAPTAIN PINCH', w: 76, h: 50, song: 'boss3' },
+  scarab: { name: 'SIR ROLLSALOT', w: 66, h: 54, song: 'boss4' },
+  grumble: { name: 'KING GRUMBLE', w: 64, h: 60, song: 'boss' },
 };
 
 // ---------------------------------------------------------------- level builder
@@ -263,6 +344,10 @@ function builder(w, theme, name) {
     coins(x0, x1, y) { return b.row(x0, x1, y, 'C'); },
     col(x, y0, y1, c = 'C') { return b.fill(x, y0, x, y1, c); },
     lava(x0, x1) { return b.fill(x0, 15, x1, 16, 'L'); },
+    // a wall from ceiling to floor with a gap between rows g0 and g1 (used underwater)
+    wall(x, g0, g1) { b.fill(x, 2, x + 1, g0 - 1, '#'); return b.fill(x, g1 + 1, x + 1, GT - 1, '#'); },
+    // the boss arena: a gate at `door`, the boss inside, the goal beyond
+    arena(kind, aL, door) { b.fill(door, 2, door, GT - 1, 'D'); b.e('boss', door - 9, 12, { kind, aL, aR: door, door }); return b.e('goal', door + 9, 13); },
     stairs(x, n, dir = 1, top = GT) {
       for (let i = 0; i < n; i++) { const hgt = dir > 0 ? i + 1 : n - i; b.fill(x + i, top - hgt, x + i, top - 1, '#'); }
       return b;
@@ -358,18 +443,68 @@ function buildLevels() {
       .t(145, 10, 'U').e('firebar', 145, 10, { len: 4, speed: -0.045 }).t(141, 6, '+')
       .t(150, 13, 'S').t(151, 13, 'S').t(155, 13, 'T').e('s', 158, 13)
       .e('big', 22, 10, { i: 0 }).e('big', 73, 7, { i: 1 })
-      .e('check', 162, 13).fill(186, 2, 186, 13, 'D').e('boss', 178, 12).e('goal', 195, 13);
+      .e('check', 162, 13).arena('grumble', 165, 186);
     L.push(b.lv);
   }
-  return L;
+  // ---------- Spooky Woods
+  {
+    const b = builder(192, 'woods', 'Spooky Woods');
+    b.ground(0, 22).coins(5, 8, 11).t(10, 10, '?').t(11, 10, '!').e('g', 16, 13)
+      .ground(26, 48).fill(30, 12, 31, 13, '#').coins(30, 31, 10).e('ghost', 35, 8).row(36, 40, 9, '=').coins(36, 40, 8).e('big', 38, 5, { i: 0 })
+      .e('s', 42, 13).t(45, 13, 'S').t(46, 13, 'S')
+      .e('fall', 49, 12, { w: 2 }).e('fall', 52, 11, { w: 2 }).coins(49, 50, 10).coins(52, 53, 9)
+      .ground(55, 80).e('check', 57, 13).e('b', 62, 8).row(64, 68, 10, 'B').t(66, 10, '*').e('b', 70, 7).e('ghost', 73, 7).e('j', 77, 13)
+      .e('mplat', 81, 11, { w: 3, range: 3 * T }).coins(82, 86, 8)
+      .ground(87, 112).e('spring', 90, 13).row(92, 99, 5, '=').coins(92, 98, 4).e('big', 99, 2, { i: 1 })
+      .e('ghost', 96, 10).e('g', 102, 13).e('g', 105, 13).e('s', 109, 13)
+      .e('vplat', 114, 12, { w: 3, range: 4 * T })
+      .ground(119, 191).e('check', 121, 13).e('ghost', 127, 6).t(131, 13, 'S').t(132, 13, 'S').e('ghost', 137, 9)
+      .row(139, 143, 10, 'B').t(141, 10, '+').e('b', 146, 8)
+      .arena('bat', 150, 172);
+    L.push(b.lv);
+  }
+  // ---------- Coral Reef (underwater: swim by tapping jump)
+  {
+    const b = builder(190, 'reef', 'Coral Reef');
+    b.lv.water = true;
+    b.fill(0, 0, 189, 1, '#').ground(0, 189).coins(5, 9, 10)
+      .wall(14, 8, 11).coins(17, 21, 6).row(17, 21, 13, 'S').e('jelly', 19, 9)
+      .wall(26, 3, 6).t(29, 13, 'S').t(31, 13, 'S').e('big', 30, 11, { i: 0 }).e('jelly', 33, 5).e('b', 36, 9)
+      .wall(40, 9, 12).t(45, 8, '?').t(46, 8, '+').coins(43, 49, 5)
+      .wall(52, 4, 7).e('jelly', 55, 8).wall(58, 9, 12)
+      .e('check', 62, 13).coins(64, 78, 8).e('jelly', 66, 4).e('jelly', 66, 11).e('jelly', 70, 7).e('jelly', 74, 4).e('jelly', 74, 11).e('s', 69, 13).e('s', 77, 13)
+      .wall(82, 5, 8).e('b', 86, 4).wall(90, 9, 12).e('big', 93, 3, { i: 1 }).e('jelly', 93, 7).wall(96, 3, 6)
+      .row(100, 104, 8, 'B').t(102, 8, '*').row(106, 116, 13, 'S').coins(106, 116, 9).e('b', 109, 6).e('b', 113, 11)
+      .wall(118, 7, 10).e('check', 122, 13).e('jelly', 126, 6).e('jelly', 126, 11)
+      .wall(130, 3, 6).e('jelly', 133, 9).wall(136, 9, 12).e('jelly', 139, 5).wall(142, 5, 8).coins(144, 147, 7)
+      .arena('crab', 148, 170);
+    L.push(b.lv);
+  }
+  // ---------- Sandy Ruins
+  {
+    const b = builder(192, 'desert', 'Sandy Ruins');
+    b.ground(0, 24).coins(5, 8, 11).e('cactus', 12, 13).t(15, 10, '?').t(16, 10, '!').t(17, 10, '?').e('cactus', 20, 13).e('big', 20, 9, { i: 0 })
+      .ground(28, 62).e('g', 34, 13).e('cactus', 40, 13).coins(39, 41, 9).e('s', 47, 13).fill(59, 11, 62, 13, '#').e('bspawn', 59, 10, { dir: -1 })
+      .e('fall', 64, 11, { w: 2 }).e('fall', 67, 10, { w: 2 }).coins(64, 65, 9).coins(67, 68, 8)
+      .ground(70, 100).e('check', 72, 13).fill(76, 0, 96, 1, '#').e('crusher', 79, 2).e('crusher', 85, 2).e('crusher', 91, 2).coins(82, 83, 12).coins(88, 89, 12)
+      .row(97, 99, 10, 'B').t(98, 10, '*')
+      .e('mplat', 101, 11, { w: 3, range: 2.5 * T })
+      .ground(106, 142).e('spring', 108, 13).row(110, 116, 5, '=').coins(110, 115, 4).e('big', 116, 2, { i: 1 })
+      .e('cactus', 113, 13).e('cactus', 119, 13).e('j', 124, 13).e('s', 130, 13).e('cactus', 134, 13)
+      .fill(139, 11, 142, 13, '#').e('bspawn', 139, 10, { dir: -1 }).e('check', 141, 10).t(141, 6, '+')
+      .ground(147, 191).e('g', 149, 13)
+      .arena('scarab', 151, 173);
+    L.push(b.lv);
+  }
+  return [L[0], L[1], L[2], L[4], L[5], L[6], L[3]]; // Lava Castle is the finale
 }
 const LEVELS = buildLevels();
 // Difficulty sets how long the clock gives you in each world, how much time a checkpoint adds,
 // how fast the storm chases, and how much each leftover second is worth.
 const DIFFS = [
-  { name: 'Easy', color: '#7dff7d', time: [120, 130, 130, 200], check: 20, chase: 1.1, bonus: 10 },
-  { name: 'Normal', color: '#ffe14a', time: [80, 90, 90, 150], check: 15, chase: 1.5, bonus: 20 },
-  { name: 'Hard', color: '#ff6b6b', time: [55, 60, 65, 110], check: 10, chase: 1.9, bonus: 40 },
+  { name: 'Easy', color: '#7dff7d', time: [120, 130, 130, 160, 170, 170, 200], check: 20, chase: 1.1, bonus: 10 },
+  { name: 'Normal', color: '#ffe14a', time: [80, 90, 90, 110, 120, 120, 150], check: 15, chase: 1.5, bonus: 20 },
+  { name: 'Hard', color: '#ff6b6b', time: [55, 60, 65, 80, 85, 85, 110], check: 10, chase: 1.9, bonus: 40 },
 ];
 const diff = () => DIFFS[game.diff];
 
@@ -395,22 +530,41 @@ function layoutTouch() {
   TOUCH.sig = sig; touchLayer.innerHTML = ''; TOUCH.btns = []; TOUCH.st = {};
   if (!show) return;
   const W = r.width, Hh = r.height, portrait = Hh > W;
-  const k = Math.max(0.72, Math.min(1.2, Math.min(W, Hh) / 390));
   const add = (key, label, cx, cy, rad, cls = '') => {
     const el = document.createElement('div'); el.className = 'tb ' + cls; el.textContent = label;
     el.style.cssText = `left:${cx - rad}px;top:${cy - rad}px;width:${rad * 2}px;height:${rad * 2}px;font-size:${rad * 0.8}px`;
     touchLayer.appendChild(el); TOUCH.btns.push({ key, cx, cy, rad, el });
   };
-  // in portrait the buttons sit in the empty space under the game
-  const by = portrait ? Math.max(cr.bottom - r.top + 90 * k, Hh - Math.max(110 * k, (Hh - (cr.bottom - r.top)) * 0.45)) : Hh - 66 * k;
-  if (game.mode === 2) {
-    const q = Math.min(k, W / 620);
-    add('l0', '◀', 50 * q, by, 40 * q, 'p1'); add('r0', '▶', 138 * q, by, 40 * q, 'p1'); add('j0', '▲', 232 * q, by - 8 * q, 44 * q, 'p1');
-    add('j1', '▲', W - 232 * q, by - 8 * q, 44 * q, 'p2'); add('l1', '◀', W - 138 * q, by, 40 * q, 'p2'); add('r1', '▶', W - 50 * q, by, 40 * q, 'p2');
+  if (portrait) {
+    // The buttons live in the empty space under the game, centred in it, and are sized to fit
+    // that space so nothing overlaps or runs off the bottom of the screen.
+    const top = cr.bottom - r.top + 10, space = Math.max(120, Hh - top - 10);
+    if (game.mode === 2) { // one row per player
+      const k = Math.min(1.1, W / 400, space / 250), rowH = Math.min(space / 2, 130 * k);
+      const y0 = top + (space - rowH * 2) / 2;
+      [0, 1].forEach(pi => {
+        const y = y0 + rowH * (pi + 0.5), cls = pi ? 'p2' : 'p1';
+        add('l' + pi, '◀', 56 * k, y, 44 * k, cls); add('r' + pi, '▶', 160 * k, y, 44 * k, cls); add('j' + pi, '▲', W - 68 * k, y, 50 * k, cls);
+      });
+    } else {
+      const k = Math.min(1.15, W / 390, space / 230);
+      const jr = 58 * k, sr = 30 * k, gap = 12 * k, block = jr * 2 + gap + sr * 2;   // swap sits above jump
+      const y0 = top + (space - block) / 2, jy = y0 + sr * 2 + gap + jr;
+      add('l0', '◀', 62 * k, jy, 48 * k); add('r0', '▶', 172 * k, jy, 48 * k);
+      add('j0', '▲', W - 74 * k, jy, jr, 'jump');
+      add('s0', '⇄', W - 74 * k, y0 + sr, sr, 'swap');
+    }
   } else {
-    add('l0', '◀', 62 * k, by, 48 * k); add('r0', '▶', 172 * k, by, 48 * k);
-    add('j0', '▲', W - 76 * k, by - 4 * k, 58 * k, 'jump');
-    add('s0', '⇄', W - 180 * k, by + 14 * k, 30 * k, 'swap');
+    const k = Math.max(0.72, Math.min(1.2, Math.min(W, Hh) / 390)), by = Hh - 66 * k;
+    if (game.mode === 2) {
+      const q = Math.min(k, W / 620);
+      add('l0', '◀', 50 * q, by, 40 * q, 'p1'); add('r0', '▶', 138 * q, by, 40 * q, 'p1'); add('j0', '▲', 232 * q, by - 8 * q, 44 * q, 'p1');
+      add('j1', '▲', W - 232 * q, by - 8 * q, 44 * q, 'p2'); add('l1', '◀', W - 138 * q, by, 40 * q, 'p2'); add('r1', '▶', W - 50 * q, by, 40 * q, 'p2');
+    } else {
+      add('l0', '◀', 62 * k, by, 48 * k); add('r0', '▶', 172 * k, by, 48 * k);
+      add('j0', '▲', W - 76 * k, by - 4 * k, 58 * k, 'jump');
+      add('s0', '⇄', W - 168 * k, by - 74 * k, 30 * k, 'swap'); // up and to the left of jump, clear of it
+    }
   }
 }
 function touchUpdate(e) {
@@ -527,7 +681,12 @@ let game = {
   fireworks: [], best: 0, levelTime: 0, diff: 1, timeLeft: 0, timeMax: 0, timeBonus: 0, chaseX: null, stars: [false, false, false], bestStars: [], boss: null, freeze: 0, look: 0, shake: 0,
 };
 try { game.unlocked = Math.max(1, Math.min(LEVELS.length, +localStorage.getItem('ak_unlocked') || 1)); game.best = +localStorage.getItem('ak_best') || 0; game.bestStars = JSON.parse(localStorage.getItem('ak_stars') || '[]');
-  const d = localStorage.getItem('ak_diff'); if (d !== null && DIFFS[+d]) game.diff = +d; } catch (e) {}
+  const d = localStorage.getItem('ak_diff'); if (d !== null && DIFFS[+d]) game.diff = +d;
+  if (localStorage.getItem('ak_v') !== '2') { // Lava Castle moved from world 4 to world 7
+    if (game.bestStars[3] != null) { game.bestStars[6] = game.bestStars[3]; game.bestStars[3] = 0; }
+    game.unlocked = Math.min(game.unlocked, 4);
+    localStorage.setItem('ak_v', '2'); localStorage.setItem('ak_stars', JSON.stringify(game.bestStars)); localStorage.setItem('ak_unlocked', game.unlocked);
+  } } catch (e) {}
 if (DEBUG) game.unlocked = LEVELS.length;
 
 function makePlayer(who, idx) {
@@ -547,7 +706,7 @@ function startGame(mode, who) {
 function loadLevel(i) {
   game.world = i;
   const src = LEVELS[i];
-  lv = { w: src.w, theme: src.theme, name: src.name, g: src.g.map(r => r.slice()), start: src.start };
+  lv = { w: src.w, theme: src.theme, name: src.name, g: src.g.map(r => r.slice()), start: src.start, water: !!src.water };
   game.ents = []; parts = []; popups = []; game.fireworks = [];
   game.totalCoins = 0; game.levelCoins = 0; game.levelTime = 0;
   game.timeMax = diff().time[i] * 60; game.timeLeft = game.timeMax; game.timeBonus = 0;
@@ -574,7 +733,11 @@ function spawnEnt(e) {
     case 'g': o = { ...base, x: x + 3, y: y + 6, w: 26, h: 26, vx: -1, stomp: true }; break;
     case 'j': o = { ...base, x: x + 3, y: y + 6, w: 26, h: 26, stomp: true, dir: -1, wait: 40 }; break;
     case 'big': o = { ...base, x: x + 1, y: y + 1, w: 30, h: 30, i: e.i, y0: y + 1 }; break;
-    case 'boss': o = { ...base, x, y: y + 4, w: 64, h: 60, hp: 3, st: 'sleep', wait: 0, inv: 0, hops: 0, aL: 165 * T, aR: 186 * T }; break;
+    case 'boss': { const B = BOSS[e.kind]; o = { ...base, kind: e.kind, x, y: (e.y + 2) * T - B.h, w: B.w, h: B.h, hp: 3, st: 'sleep', wait: 0, inv: 0, hops: 0, dir: -1, guard: false, aL: e.aL * T, aR: e.aR * T, door: e.door }; break; }
+    case 'ghost': o = { ...base, x: x + 2, y: y + 2, w: 28, h: 28, stomp: false, shy: false, dir: -1 }; break;
+    case 'jelly': o = { ...base, x: x + 4, y, w: 24, h: 26, y0: y, stomp: false }; break;
+    case 'cactus': o = { ...base, x: x + 7, y: y - 14, w: 18, h: 46, stomp: false }; break;
+    case 'bspawn': o = { ...base, x, y, w: 32, h: 32, timer: 40, dir: e.dir || -1 }; break;
     case 's': o = { ...base, x: x + 3, y: y + 8, w: 26, h: 24, vx: -0.8, stomp: false }; break;
     case 'p': o = { ...base, x: x + 2, y: y + 4, w: 28, h: 28, vx: -1.8, stomp: true }; break;
     case 'b': o = { ...base, x: x + 2, y: y + 4, w: 28, h: 22, x0: x, y0: y, stomp: true, dir: -1 }; break;
@@ -648,13 +811,14 @@ function swapChar(p) {
 function hitBoss(e, p) {
   e.hp--; e.inv = 80; SFX.bosshit(); game.freeze = 8; game.shake = 12; e.st = 'idle'; e.wait = 50; e.vx = 0;
   burst(e.x + e.w / 2, e.y + 10, '#ffe14a', 20, 6);
-  popup(e.x + e.w / 2, e.y - 10, e.hp > 0 ? 'OUCH!' : 'KING GRUMBLE DEFEATED!', '#ffe14a');
+  e.guard = false;
+  popup(e.x + e.w / 2, e.y - 10, e.hp > 0 ? 'OUCH!' : BOSS[e.kind].name + ' DEFEATED!', '#ffe14a');
   if (e.hp > 0) return;
   e.alive = false; e.deadT = 0; e.how = 'boss'; e.vy = -9; e.vx = 0; game.boss = null; game.score += 5000; game.coins += 10; game.levelCoins += 10;
-  for (let i = 0; i < 10; i++) parts.push({ x: e.x + 32 + (i - 5) * 6, y: e.y, vx: (i - 4.5) * 0.9, vy: -8 - (i % 3) * 2, life: 50, coin: true, grav: 0.4, size: 10 });
-  for (let y = 2; y <= 13; y++) { setTile(186, y, '.'); burst(186 * T + 16, y * T + 16, '#8a8aa0', 4, 4); }
+  for (let i = 0; i < 10; i++) parts.push({ x: e.x + e.w / 2 + (i - 5) * 6, y: e.y, vx: (i - 4.5) * 0.9, vy: -8 - (i % 3) * 2, life: 50, coin: true, grav: 0.4, size: 10 });
+  for (let y = 2; y <= 13; y++) { setTile(e.door, y, '.'); burst(e.door * T + 16, y * T + 16, '#8a8aa0', 4, 4); }
   for (const f of game.ents) if (f.k === 'fb') f.remove = true;
-  game.ents.push({ k: 'big', i: 2, x: e.x + 17, y: 300, y0: 300, w: 30, h: 30, alive: true, active: true, t: 0, vx: 0, vy: 0 });
+  game.ents.push({ k: 'big', i: 2, x: Math.max(e.aL + 40, Math.min(e.aR - 70, e.x + e.w / 2 - 15)), y: 300, y0: 300, w: 30, h: 30, alive: true, active: true, t: 0, vx: 0, vy: 0 });
   playSong(THEMES[lv.theme].song); SFX.win();
 }
 function defeat(e, p, how = 'stomp', combo = 1) {
@@ -767,21 +931,26 @@ function updatePlayer(p) {
   const icy = p.groundTile === 'I' && p.onGround;
   const accel = p.onGround ? (icy ? 0.1 : 0.55) : 0.38;
   const fric = p.onGround ? (icy ? 0.015 : 0.22) : 0.04;
-  const max = ch.speed * (p.star > 0 ? 1.15 : 1);
+  const max = ch.speed * (p.star > 0 ? 1.15 : 1) * (lv.water ? 0.74 : 1);
   if (inp.l && !inp.r) { p.vx = Math.max(-max, p.vx - accel); p.face = -1; }
   else if (inp.r && !inp.l) { p.vx = Math.min(max, p.vx + accel); p.face = 1; }
   else { if (Math.abs(p.vx) <= fric) p.vx = 0; else p.vx -= Math.sign(p.vx) * fric * (p.onGround ? 1 : 1) * (icy ? 1 : 1.2); }
 
   if (p.onGround) { p.coyote = 7; p.usedDbl = false; p.combo = 0; } else if (p.coyote > 0) p.coyote--;
   if (inp.jPressed) p.jbuf = 8; else if (p.jbuf > 0) p.jbuf--;
-  if (p.jbuf > 0 && p.coyote > 0) {
+  if (lv.water) { // swimming: every press of jump is a stroke
+    if (inp.jPressed) {
+      p.vy = -5.4; p.jbuf = 0; p.squash = -6; SFX.swim();
+      for (let i = 0; i < 3; i++) parts.push({ x: p.x + p.w / 2 + (Math.random() - 0.5) * 16, y: p.y + p.h - 6, vx: (Math.random() - 0.5), vy: -0.6 - Math.random(), life: 40, color: 'rgba(255,255,255,.7)', size: 3 + Math.random() * 3, grav: -0.02 });
+    }
+  } else if (p.jbuf > 0 && p.coyote > 0) {
     p.vy = -ch.jump; p.coyote = 0; p.jbuf = 0; p.onGround = false; p.squash = -8; SFX.jump();
   } else if (inp.jPressed && !p.onGround && p.coyote <= 0 && p.wings && !p.usedDbl) {
     p.vy = -ch.jump * 0.92; p.usedDbl = true; p.jbuf = 0; SFX.dbl();
     for (let i = 0; i < 8; i++) parts.push({ x: p.x + p.w / 2 + (Math.random() - 0.5) * 20, y: p.y + p.h, vx: (Math.random() - 0.5) * 3, vy: Math.random() * 2, life: 30, color: '#fff', size: 5, grav: 0 });
   }
-  const grav = (inp.j && p.vy < 0) ? 0.45 : 0.9;
-  p.vy = Math.min(13, p.vy + grav);
+  const grav = lv.water ? (inp.j && p.vy < 0 ? 0.13 : 0.2) : (inp.j && p.vy < 0) ? 0.45 : 0.9;
+  p.vy = Math.min(lv.water ? 2.4 : 13, p.vy + grav);
 
   const wasGround = p.onGround;
   moveBody(p);
@@ -844,9 +1013,11 @@ function updatePlayer(p) {
     }
     if (e.k === 'boss') {
       if (e.st === 'sleep' || e.inv > 0 || !overlap(p, e)) continue;
-      if (p.vy > 0 && p.prevBottom <= e.y + 20) { hitBoss(e, p); p.vy = -13; p.y = e.y - p.h; }
+      const above = p.vy > 0 && p.prevBottom <= e.y + (e.kind === 'bat' ? 28 : 20);
+      if (above && !(e.kind === 'crab' && e.guard)) { hitBoss(e, p); p.vy = -13; p.y = e.y - p.h; }
       else if (p.star > 0) hitBoss(e, p);
-      else hurt(p);
+      else if (e.kind === 'scarab' && e.st === 'stun') { /* dazed: safe to bump into */ }
+      else { hurt(p); if (above) p.vy = -9; }
       continue;
     }
     if (e.k === 'firebar') {
@@ -857,6 +1028,7 @@ function updatePlayer(p) {
       continue;
     }
     if (!overlap(p, e)) continue;
+    if (e.k === 'bspawn') continue;
     if (e.k === 'crusher' || e.k === 'icicle') { if (p.star > 0 && e.k === 'icicle') { e.alive = false; burst(e.x + 8, e.y + 14, '#bfe9ff', 12); } else hurt(p); continue; }
     // enemies
     if (p.star > 0) { defeat(e, p, 'star'); SFX.stomp(); continue; }
@@ -988,31 +1160,72 @@ function updateEnt(e) {
       break;
     }
     case 'boss': {
+      const B = BOSS[e.kind];
       if (e.st === 'sleep') {
-        if (game.players.some(p => !p.dead && p.x > e.aL + T)) { e.st = 'idle'; e.wait = 80; game.boss = e; playSong('boss'); SFX.roar(); game.shake = 10; popup(e.x + 32, e.y - 20, 'KING GRUMBLE!', '#ff6b8b'); }
+        if (game.players.some(p => !p.dead && p.x > e.aL + T)) { e.st = 'idle'; e.wait = 80; game.boss = e; playSong(B.song); SFX.roar(); game.shake = 10; popup(e.x + e.w / 2, e.y - 20, B.name + '!', '#ff6b8b'); }
         break;
       }
       if (e.inv > 0) e.inv--;
-      e.vy = Math.min(13, e.vy + 0.55);
-      moveBody(e);
-      if (e.x < e.aL) { e.x = e.aL; e.vx = Math.abs(e.vx); }
-      if (e.x + e.w > e.aR) { e.x = e.aR - e.w; e.vx = -Math.abs(e.vx); }
-      if (e.st === 'idle') {
-        e.vx = 0;
-        if (--e.wait <= 0 && e.onGround) {
-          const pl = nearestPlayer(e.x + 32), dx = pl ? pl.x + pl.w / 2 - (e.x + e.w / 2) : 0;
-          e.vx = Math.max(-4.5, Math.min(4.5, dx / 40)); e.vy = -12 - (3 - e.hp); e.st = 'air'; e.onGround = false;
+      const pl = nearestPlayer(e.x + e.w / 2), pdx = pl ? pl.x + pl.w / 2 - (e.x + e.w / 2) : 0;
+      const clamp = () => { let hit = 0; if (e.x < e.aL) { e.x = e.aL; hit = -1; } if (e.x + e.w > e.aR) { e.x = e.aR - e.w; hit = 1; } return hit; };
+      const rage = 3 - e.hp; // 0, 1, 2: bosses speed up as they take hits
+      if (e.kind === 'grumble') { // hops at you and spits fireballs
+        e.vy = Math.min(13, e.vy + 0.55); moveBody(e);
+        const c = clamp(); if (c) e.vx = -c * Math.abs(e.vx);
+        if (e.st === 'idle') {
+          e.vx = 0;
+          if (--e.wait <= 0 && e.onGround) { e.vx = Math.max(-4.5, Math.min(4.5, pdx / 40)); e.vy = -12 - rage; e.st = 'air'; e.onGround = false; }
+        } else if (e.st === 'air' && e.onGround) {
+          e.st = 'idle'; e.vx = 0; e.wait = 34 + e.hp * 16; e.hops++; game.shake = 8; noise(0.15, 0.15);
+          burst(e.x + 32, e.y + e.h, '#bbb', 10, 4);
+          if (e.hops % 2 === 0 || e.hp < 3) {
+            const dir = pdx < 0 ? -1 : 1, dirs = e.hp === 1 ? [dir, -dir] : [dir];
+            for (const d of dirs) game.ents.push({ k: 'fb', x: e.x + 24 + d * 30, y: e.y + e.h - 20, w: 16, h: 16, vx: d * 3.1, vy: 0, life: 230, alive: true, active: true, t: 0, stomp: false });
+            SFX.shoot();
+          }
         }
-      } else if (e.st === 'air' && e.onGround) {
-        e.st = 'idle'; e.vx = 0; e.wait = 34 + e.hp * 16; e.hops++; game.shake = 8; noise(0.15, 0.15);
-        burst(e.x + 32, e.y + e.h, '#bbb', 10, 4);
-        if (e.hops % 2 === 0 || e.hp < 3) {
-          const pl = nearestPlayer(e.x + 32), dir = pl && pl.x < e.x ? -1 : 1;
-          const dirs = e.hp === 1 ? [dir, -dir] : [dir];
-          for (const d of dirs) game.ents.push({ k: 'fb', x: e.x + 24 + d * 30, y: e.y + e.h - 20, w: 16, h: 16, vx: d * 3.1, vy: 0, life: 230, alive: true, active: true, t: 0, stomp: false });
-          SFX.shoot();
+      } else if (e.kind === 'bat') { // hovers out of reach, then swoops low: stomp it at the bottom of the dive
+        const top = 5 * T, low = GT * T - e.h - 4;
+        if (e.st === 'idle') {
+          e.x += Math.max(-1.6, Math.min(1.6, pdx * 0.03)); e.y += (top + Math.sin(e.t * 0.08) * 10 - e.y) * 0.08; clamp();
+          if (--e.wait <= 0) { e.st = 'swoop'; e.sw = 0; e.sx = e.x; e.tx = Math.max(e.aL, Math.min(e.aR - e.w, e.x + Math.max(-320, Math.min(320, pdx * 2)))); SFX.roar(); }
+        } else {
+          e.sw += 1 / (88 - rage * 14);
+          const u = Math.min(1, e.sw); e.x = e.sx + (e.tx - e.sx) * u; e.y = top + (low - top) * Math.sin(Math.PI * u);
+          if (u >= 1) { e.st = 'idle'; e.wait = 45 + e.hp * 25; }
         }
+      } else if (e.kind === 'crab') { // scuttles side to side; stomp it only while its claws are down
+        e.vy = Math.min(13, e.vy + 0.55); e.vx = e.dir * (1.3 + rage * 0.5); moveBody(e);
+        if (clamp() || e.hitWall) e.dir = -e.dir;
+        if (--e.wait <= 0) { e.guard = !e.guard; e.wait = e.guard ? 90 : 150; if (e.guard) SFX.bump(); }
+      } else { // scarab: charges across the arena, then lies dazed after hitting the wall
+        e.vy = Math.min(13, e.vy + 0.55);
+        if (e.st === 'idle') { e.vx = 0; moveBody(e); if (--e.wait <= 0) { e.st = 'charge'; e.dir = pdx < 0 ? -1 : 1; SFX.roar(); } }
+        else if (e.st === 'charge') {
+          e.vx = e.dir * (5 + rage * 0.8); moveBody(e);
+          if (game.t % 4 === 0) burst(e.x + e.w / 2 - e.dir * 30, e.y + e.h, '#e8cf9a', 2, 2, 0, 5);
+          if (clamp() || e.hitWall) { e.st = 'stun'; e.wait = 120 - rage * 15; e.vx = 0; game.shake = 10; noise(0.2, 0.18); burst(e.x + e.w / 2 + e.dir * 30, e.y + 20, '#e8cf9a', 14, 5); }
+        } else { moveBody(e); if (--e.wait <= 0) { e.st = 'idle'; e.wait = 45; } }
       }
+      break;
+    }
+    case 'ghost': { // creeps toward you, but freezes while you look at it
+      const pl = nearestPlayer(e.x);
+      if (!pl) break;
+      const dx = pl.x - e.x, dy = pl.y + 10 - e.y, d = Math.hypot(dx, dy);
+      e.dir = dx < 0 ? -1 : 1;
+      e.shy = pl.face === (dx < 0 ? 1 : -1);
+      if (!e.shy && d < 460 && d > 4) { e.x += dx / d * 1.15; e.y += dy / d * 1.15; }
+      break;
+    }
+    case 'jelly': e.y = e.y0 + Math.sin(e.t * 0.04 + e.x) * 42; break;
+    case 'bspawn': {
+      if (--e.timer <= 0) { e.timer = 210; game.ents.push({ k: 'boulder', x: e.x + 2, y: e.y + 2, w: 28, h: 28, vx: e.dir * 2.3, vy: 0, stomp: false, alive: true, active: true, t: 0, rot: 0 }); }
+      break;
+    }
+    case 'boulder': {
+      e.vy = Math.min(12, e.vy + 0.6); const vx = e.vx; moveBody(e); e.rot += vx * 0.07;
+      if (e.hitWall || e.y > H * T + 40 || e.t > 700) { e.remove = true; if (e.hitWall) { burst(e.x + 14, e.y + 14, '#b98a5a', 10, 4); noise(0.1, 0.1); } }
       break;
     }
     case 'b': {
@@ -1372,7 +1585,7 @@ function drawHUD() {
   if (game.boss) {
     const bx = VW / 2 - 110;
     ctx.fillStyle = 'rgba(0,0,0,.45)'; rr(bx, VH - 54, 220, 40, 12); ctx.fill();
-    text('KING GRUMBLE', bx + 16, VH - 34, 14, '#ffb3c6', 'left', '#222', 3);
+    text(BOSS[game.boss.kind].name, bx + 14, VH - 34, 13, '#ffb3c6', 'left', '#222', 3);
     for (let i = 0; i < 3; i++) heart(bx + 150 + i * 24, VH - 35, 9, i < game.boss.hp ? '#b14aed' : 'rgba(255,255,255,.25)');
   }
   text('×' + Math.max(0, game.lives), hx + 6, 34, 20, '#fff', 'left');
@@ -1468,8 +1681,7 @@ function drawIntro() {
   });
   text('Lives × ' + game.lives, VW / 2, 450, 22, '#fff');
   const swapTip = game.mode === 1 ? (TOUCH.on ? '  Tap ⇄ to swap kids!' : '  Press X to swap kids!') : '';
-  const tips = ['Stomp the Grumbles and find 3 big stars!' + swapTip, 'Ice is slippery! Watch out for falling icicles!', 'A storm is chasing you! Keep moving and beat the clock!', 'Dodge the fire and beat King Grumble!'];
-  text(tips[game.world], VW / 2, 490, VW < 800 ? 15 : 18, '#bff', 'center', '#222', 4);
+  text(THEMES[lv.theme].tip + (game.world === 0 ? swapTip : ''), VW / 2, 490, VW < 800 ? 15 : 18, '#bff', 'center', '#222', 4);
   ctx.globalAlpha = 1;
 }
 

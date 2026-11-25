@@ -31,7 +31,12 @@ All the artwork is drawn in code (`art.js`): there are no image files apart from
 1. **Sunny Meadow**: springs, moving platforms and falling platforms
 2. **Penguin Peaks**: slippery ice, sliding penguins and falling icicles
 3. **Smiley Skies**: a sky-high obstacle course across clouds, chased by a grumpy storm that keeps the screen moving
-4. **Lava Castle**: fire bars, crushers, cannons, lava and the boss, **King Grumble**
+4. **Spooky Woods**: shy ghosts that freeze while you look at them, and the swooping boss **Count Flapula**
+5. **Coral Reef**: underwater! Tap jump again and again to swim past jellyfish, then face **Captain Pinch** the crab (only stomp him while his claws are down)
+6. **Sandy Ruins**: rolling boulders, prickly cactus, stone crushers and the charging beetle **Sir Rollsalot**
+7. **Lava Castle**: fire bars, crushers, cannons, lava and the final boss, **King Grumble**
+
+Every boss takes three stomps and drops the world's third big star.
 
 ## Publishing on GitHub Pages
 
